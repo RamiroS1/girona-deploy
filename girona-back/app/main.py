@@ -15,6 +15,68 @@ def _auto_migrate_schema() -> None:
         return
     try:
         with db.engine.begin() as conn:
+            if conn.dialect.name == "sqlite":
+                table_exists = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name='pos_tables'")
+                ).first()
+                if table_exists:
+                    columns = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(pos_tables)")).fetchall()
+                    }
+                    if "section" not in columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE pos_tables "
+                                "ADD COLUMN section VARCHAR NOT NULL DEFAULT 'ZONA PRINCIPAL'"
+                            )
+                        )
+                pos_orders_exists = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name='pos_orders'")
+                ).first()
+                if pos_orders_exists:
+                    pos_order_columns = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(pos_orders)")).fetchall()
+                    }
+                    if "utility_total" not in pos_order_columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE pos_orders "
+                                "ADD COLUMN utility_total NUMERIC(14, 2) NOT NULL DEFAULT 0"
+                            )
+                        )
+                sales_exists = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name='sales'")
+                ).first()
+                if sales_exists:
+                    sales_columns = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(sales)")).fetchall()
+                    }
+                    if "utility_total" not in sales_columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE sales "
+                                "ADD COLUMN utility_total NUMERIC(14, 2) NOT NULL DEFAULT 0"
+                            )
+                        )
+                reservations_exists = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name='reservations'")
+                ).first()
+                if reservations_exists:
+                    reservations_columns = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(reservations)")).fetchall()
+                    }
+                    if "google_event_id" not in reservations_columns:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE reservations "
+                                "ADD COLUMN google_event_id VARCHAR"
+                            )
+                        )
+                return
             conn.execute(text("ALTER TABLE IF EXISTS inventory_products ALTER COLUMN unit DROP NOT NULL"))
             conn.execute(text("ALTER TABLE IF EXISTS inventory_products DROP COLUMN IF EXISTS reorder_point"))
             conn.execute(
@@ -72,6 +134,36 @@ def _auto_migrate_schema() -> None:
                 text(
                     "ALTER TABLE IF EXISTS users "
                     "ADD COLUMN IF NOT EXISTS profile_photo_url TEXT"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS pos_tables "
+                    "ADD COLUMN IF NOT EXISTS section VARCHAR NOT NULL DEFAULT 'ZONA PRINCIPAL'"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS pos_orders "
+                    "ADD COLUMN IF NOT EXISTS utility_total NUMERIC(14, 2) NOT NULL DEFAULT 0"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS sales "
+                    "ADD COLUMN IF NOT EXISTS utility_total NUMERIC(14, 2) NOT NULL DEFAULT 0"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS reservations "
+                    "DROP CONSTRAINT IF EXISTS uq_reservations_date"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS reservations "
+                    "ADD COLUMN IF NOT EXISTS google_event_id VARCHAR"
                 )
             )
     except Exception as exc:

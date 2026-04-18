@@ -17,6 +17,15 @@ const Chart = dynamic(() => import("react-apexcharts"), {
 
 export function PaymentsOverviewChart({ data }: PropsType) {
   const isMobile = useIsMobile();
+  const pointCount = Math.max(data.received.length, data.due.length);
+  const labelStep = pointCount > 24 ? 4 : pointCount > 14 ? 2 : 1;
+  const formatCop = (value: number) =>
+    new Intl.NumberFormat("es-CO", {
+      style: "currency",
+      currency: "COP",
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    }).format(value || 0);
 
   const options: ApexOptions = {
     legend: {
@@ -74,6 +83,9 @@ export function PaymentsOverviewChart({ data }: PropsType) {
       marker: {
         show: true,
       },
+      y: {
+        formatter: (value: number) => formatCop(value),
+      },
     },
     xaxis: {
       axisBorder: {
@@ -81,6 +93,27 @@ export function PaymentsOverviewChart({ data }: PropsType) {
       },
       axisTicks: {
         show: false,
+      },
+      title: {
+        text: "Fecha",
+      },
+      labels: {
+        rotate: -50,
+        hideOverlappingLabels: true,
+        showDuplicates: false,
+        offsetY: 6,
+        formatter: (value: string, _timestamp?: number, opts?: { i?: number }) => {
+          const index = opts?.i ?? 0;
+          return index % labelStep === 0 ? value : "";
+        },
+      },
+    },
+    yaxis: {
+      labels: {
+        formatter: (value: number) => formatCop(value),
+      },
+      title: {
+        text: "Valor (COP)",
       },
     },
   };
@@ -91,11 +124,11 @@ export function PaymentsOverviewChart({ data }: PropsType) {
         options={options}
         series={[
           {
-            name: "Recibido",
+            name: "Ingresos",
             data: data.received,
           },
           {
-            name: "Gastado",
+            name: "Egresos",
             data: data.due,
           },
         ]}

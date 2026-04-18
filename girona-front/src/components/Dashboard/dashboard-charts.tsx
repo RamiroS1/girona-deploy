@@ -47,7 +47,10 @@ export default function DashboardCharts() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rangePreset, setRangePreset] = useState<"1m" | "2m" | "3m" | "custom">("1m");
+  const [rangeMode, setRangeMode] = useState<"month" | "custom">("month");
+  const [selectedMonth, setSelectedMonth] = useState(() =>
+    dayjs().tz(COLOMBIA_TZ).format("YYYY-MM"),
+  );
   const [customStart, setCustomStart] = useState(() =>
     dayjs().tz(COLOMBIA_TZ).subtract(1, "month").format("YYYY-MM-DD"),
   );
@@ -97,7 +100,7 @@ export default function DashboardCharts() {
   const defaultEnd = now.startOf("day");
 
   const { rangeStart, rangeEnd, rangeLabel } = useMemo(() => {
-    if (rangePreset === "custom") {
+    if (rangeMode === "custom") {
       const startCandidate = dayjs.tz(customStart, COLOMBIA_TZ).startOf("day");
       const endCandidate = dayjs.tz(customEnd, COLOMBIA_TZ).startOf("day");
       const validStart = startCandidate.isValid() ? startCandidate : defaultEnd;
@@ -111,12 +114,17 @@ export default function DashboardCharts() {
       };
     }
 
-    const months = rangePreset === "2m" ? 2 : rangePreset === "3m" ? 3 : 1;
-    const start = defaultEnd.subtract(months, "month").startOf("day");
-    const end = defaultEnd;
-    const label = `Ultimos ${months} mes${months > 1 ? "es" : ""}`;
+    const monthStart = dayjs.tz(`${selectedMonth}-01`, COLOMBIA_TZ).startOf("month");
+    const start = monthStart.isValid() ? monthStart : defaultEnd.startOf("month");
+    const end = start.endOf("month").startOf("day");
+    const label = new Intl.DateTimeFormat("es-CO", {
+      month: "long",
+      year: "numeric",
+      timeZone: COLOMBIA_TZ,
+    }).format(start.toDate());
+
     return { rangeStart: start, rangeEnd: end, rangeLabel: label };
-  }, [rangePreset, customStart, customEnd, defaultEnd]);
+  }, [rangeMode, selectedMonth, customStart, customEnd, defaultEnd]);
 
   const dailySeries = useMemo(() => {
     const totalDays = rangeEnd.diff(rangeStart, "day");
@@ -222,18 +230,16 @@ export default function DashboardCharts() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
-              value={rangePreset}
+              value={rangeMode}
               onChange={(event) =>
-                setRangePreset(event.target.value as typeof rangePreset)
+                setRangeMode(event.target.value as typeof rangeMode)
               }
               className="h-9 rounded-md border border-stroke bg-white px-3 text-sm text-dark shadow-sm outline-none transition focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
             >
-              <option value="1m">1 mes</option>
-              <option value="2m">2 meses</option>
-              <option value="3m">3 meses</option>
-              <option value="custom">Personalizado</option>
+              <option value="month">Mes especifico</option>
+              <option value="custom">Rango personalizado</option>
             </select>
-            {rangePreset === "custom" ? (
+            {rangeMode === "custom" ? (
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="date"
@@ -249,7 +255,14 @@ export default function DashboardCharts() {
                   className="h-9 rounded-md border border-stroke bg-white px-2 text-sm text-dark shadow-sm outline-none transition focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
                 />
               </div>
-            ) : null}
+            ) : (
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(event) => setSelectedMonth(event.target.value)}
+                className="h-9 rounded-md border border-stroke bg-white px-2 text-sm text-dark shadow-sm outline-none transition focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+              />
+            )}
           </div>
         </div>
         {loading ? (

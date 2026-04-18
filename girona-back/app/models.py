@@ -9,7 +9,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -156,6 +155,7 @@ class PosTable(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False, index=True)
+    section = Column(String, nullable=False, default="ZONA PRINCIPAL")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -201,6 +201,7 @@ class PosOrder(Base):
     discount_total = Column(Numeric(14, 2), nullable=False, default=0)
     courtesy_total = Column(Numeric(14, 2), nullable=False, default=0)
     service_total = Column(Numeric(14, 2), nullable=False, default=0)
+    utility_total = Column(Numeric(14, 2), nullable=False, default=0)
     total = Column(Numeric(14, 2), nullable=False, default=0)
 
     opened_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -269,6 +270,7 @@ class Sale(Base):
     discount_total = Column(Numeric(14, 2), nullable=False, default=0)
     courtesy_total = Column(Numeric(14, 2), nullable=False, default=0)
     service_total = Column(Numeric(14, 2), nullable=False, default=0)
+    utility_total = Column(Numeric(14, 2), nullable=False, default=0)
     total = Column(Numeric(14, 2), nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -427,9 +429,6 @@ class SaleItem(Base):
 
 class Reservation(Base):
     __tablename__ = "reservations"
-    __table_args__ = (
-        UniqueConstraint("reservation_date", name="uq_reservations_date"),
-    )
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
@@ -437,4 +436,5 @@ class Reservation(Base):
     reservation_date = Column(Date, nullable=False, index=True)
     reservation_time = Column(String, nullable=False)
     party_size = Column(Integer, nullable=False)
+    google_event_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

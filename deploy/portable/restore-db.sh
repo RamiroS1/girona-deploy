@@ -32,7 +32,8 @@ until docker compose -f "$ROOT_DIR/docker-compose.yml" exec -T db pg_isready -U 
   sleep 2
 done
 
-cat "$BACKUP_PATH" | docker compose -f "$ROOT_DIR/docker-compose.yml" exec -T db \
-  pg_restore --clean --if-exists --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB" -
+docker compose -f "$ROOT_DIR/docker-compose.yml" exec -i -T db \
+  pg_restore --clean --if-exists --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  < "$BACKUP_PATH"
 
 echo "Backup restaurado correctamente desde $BACKUP_PATH"

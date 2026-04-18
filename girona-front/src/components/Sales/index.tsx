@@ -65,6 +65,7 @@ type SalesByWaiter = {
   waiter_id: number | null;
   name: string;
   quantity: number | string;
+  service_total: number | string;
   total: number | string;
 };
 
@@ -922,6 +923,7 @@ export default function Sales() {
                 <TableRow>
                   <TableHead>Mesero</TableHead>
                   <TableHead>Ventas</TableHead>
+                  <TableHead>Propinas</TableHead>
                   <TableHead>Total</TableHead>
                 </TableRow>
               </TableHeader>
@@ -932,6 +934,7 @@ export default function Sales() {
                       {row.name}
                     </TableCell>
                     <TableCell>{formatQty(row.quantity)}</TableCell>
+                    <TableCell>{formatMoney(row.service_total)}</TableCell>
                     <TableCell className="font-semibold text-black dark:text-white">
                       {formatMoney(row.total)}
                     </TableCell>

@@ -78,6 +78,13 @@ const CalendarBox = () => {
   const monthKey = `${year}-${pad2(month + 1)}`;
 
   const cells = useMemo(() => buildCalendarCells(year, month), [year, month]);
+  const selectedDateReservations = useMemo(
+    () =>
+      reservations
+        .filter((reservation) => reservation.reservation_date === selectedDateKey)
+        .sort((a, b) => a.reservation_time.localeCompare(b.reservation_time)),
+    [reservations, selectedDateKey],
+  );
 
   const selectedReservation = useMemo(
     () => reservations.find((reservation) => reservation.id === editingReservationId) ?? null,
@@ -115,23 +122,14 @@ const CalendarBox = () => {
   }, [loadReservations]);
 
   useEffect(() => {
-    if (editingReservationId !== null) {
-      const reservationStillExists = reservations.some(
-        (reservation) => reservation.id === editingReservationId,
-      );
-      if (!reservationStillExists) {
-        setEditingReservationId(null);
-      }
-      return;
+    if (editingReservationId === null) return;
+    const reservationStillExists = reservations.some(
+      (reservation) => reservation.id === editingReservationId,
+    );
+    if (!reservationStillExists) {
+      setEditingReservationId(null);
     }
-
-    const reservationForSelectedDate =
-      reservations.find((reservation) => reservation.reservation_date === selectedDateKey) ??
-      null;
-    if (reservationForSelectedDate) {
-      setEditingReservationId(reservationForSelectedDate.id);
-    }
-  }, [editingReservationId, reservations, selectedDateKey]);
+  }, [editingReservationId, reservations]);
 
   useEffect(() => {
     if (selectedReservation) {
@@ -364,6 +362,9 @@ const CalendarBox = () => {
                   const dateKey = toDateKey(cell.date);
                   const reservation =
                     reservations.find((entry) => entry.reservation_date === dateKey) ?? null;
+                  const reservationCount = reservations.filter(
+                    (entry) => entry.reservation_date === dateKey,
+                  ).length;
                   const isSelected = dateKey === selectedDateKey;
                   const isFirst = rowIndex === 0 && idx === 0;
                   const isLast = rowIndex === 5 && idx === 6;
@@ -403,6 +404,11 @@ const CalendarBox = () => {
                           <p className="text-[10px] text-dark-5 dark:text-dark-6 sm:text-xs">
                             {reservation.reservation_time} · {reservation.party_size} pers.
                           </p>
+                          {reservationCount > 1 ? (
+                            <p className="text-[10px] text-primary sm:text-xs">
+                              +{reservationCount - 1} mas
+                            </p>
+                          ) : null}
                         </div>
                       ) : null}
                     </td>
@@ -424,6 +430,9 @@ const CalendarBox = () => {
             <p className="text-sm text-dark-5 dark:text-dark-6">
               Fecha seleccionada: {selectedDateKey}
             </p>
+            <p className="text-sm text-dark-5 dark:text-dark-6">
+              Reservas del dia: {selectedDateReservations.length}
+            </p>
           </div>
           {selectedReservation ? (
             <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
@@ -431,6 +440,46 @@ const CalendarBox = () => {
             </span>
           ) : null}
         </div>
+
+        {selectedDateReservations.length > 0 ? (
+          <div className="mb-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                Reservas de la fecha
+              </label>
+              <select
+                value={editingReservationId === null ? "" : String(editingReservationId)}
+                onChange={(event) => {
+                  const nextId = Number(event.target.value);
+                  setEditingReservationId(Number.isFinite(nextId) && nextId > 0 ? nextId : null);
+                  setFormMessage(null);
+                }}
+                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+              >
+                <option value="">Nueva reserva en esta fecha</option>
+                {selectedDateReservations.map((reservation) => (
+                  <option key={reservation.id} value={reservation.id}>
+                    {reservation.reservation_time} - {reservation.name} ({reservation.party_size} pers.)
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingReservationId(null);
+                  setFormValues(defaultFormValues);
+                  setFormMessage(null);
+                }}
+                disabled={isSaving || isDeleting}
+                className="w-full rounded-lg border border-stroke px-4 py-2 text-sm font-semibold text-dark hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
+              >
+                Crear otra reserva
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2">
           <div>

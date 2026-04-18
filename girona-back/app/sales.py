@@ -108,6 +108,7 @@ def sales_by_waiter(period: str | None = None, db_session: Session = Depends(db.
             models.Sale.waiter_id,
             func.coalesce(models.Waiter.name, "Sin asignar").label("name"),
             func.coalesce(func.count(models.Sale.id), 0).label("quantity"),
+            func.coalesce(func.sum(models.Sale.service_total), 0).label("service_total"),
             func.coalesce(func.sum(models.Sale.total), 0).label("total"),
         )
         .outerjoin(models.Waiter, models.Waiter.id == models.Sale.waiter_id)
@@ -122,6 +123,7 @@ def sales_by_waiter(period: str | None = None, db_session: Session = Depends(db.
             waiter_id=row.waiter_id,
             name=row.name,
             quantity=row.quantity,
+            service_total=row.service_total,
             total=row.total,
         )
         for row in rows

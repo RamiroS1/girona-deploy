@@ -33,9 +33,29 @@ BAR_CATEGORY_KEYS = {
     "vinos",
 }
 
+POS_TABLE_SECTIONS = (
+    "TERRAZA 1",
+    "TERRAZA 2",
+    "ZONA PICNIC",
+    "ZONA PRINCIPAL",
+)
+
 
 def _norm(value: str) -> str:
     return value.strip().lower()
+
+
+def _normalize_table_section(raw_section: str | None) -> str:
+    section = (raw_section or "").strip().upper()
+    if not section:
+        return "ZONA PRINCIPAL"
+    valid_sections = {value.upper(): value for value in POS_TABLE_SECTIONS}
+    if section not in valid_sections:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Seccion invalida. Usa: {', '.join(POS_TABLE_SECTIONS)}",
+        )
+    return valid_sections[section]
 
 
 def _table_or_404(db_session: Session, table_id: int) -> models.PosTable:
@@ -60,10 +80,12 @@ def _menu_item_or_404(db_session: Session, menu_item_id: int) -> models.MenuItem
     return item
 
 
-def _compute_order_totals(items: list[models.PosOrderItem], service_total: Decimal):
+def _compute_order_totals(
+    items: list[models.PosOrderItem], service_total: Decimal, utility_total: Decimal
+):
     subtotal = sum((i.line_subtotal for i in items), Decimal("0"))
     tax_total = sum((i.line_tax for i in items), Decimal("0"))
-    total = subtotal + tax_total + service_total
+    total = subtotal + tax_total + service_total + utility_total
     discount_total = sum((i.discount_amount for i in items), Decimal("0"))
     courtesy_total = sum((i.unit_price * i.quantity for i in items if i.courtesy), Decimal("0"))
     return subtotal, tax_total, discount_total, courtesy_total, total
@@ -245,7 +267,7 @@ def _recompute_order_for_close(order: models.PosOrder, apply_inc: bool) -> None:
         item.line_total = line_total
 
     subtotal, tax_total, discount_total, courtesy_total, total = _compute_order_totals(
-        items, Decimal(order.service_total)
+        items, Decimal(order.service_total), Decimal(order.utility_total)
     )
     order.subtotal = subtotal
     order.tax_total = tax_total
@@ -302,7 +324,11 @@ def _create_sale_from_order(
         discount_total=order.discount_total,
         courtesy_total=order.courtesy_total,
         service_total=order.service_total,
-        total=sale_subtotal + sale_tax_total + Decimal(order.service_total),
+        utility_total=order.utility_total,
+        total=sale_subtotal
+        + sale_tax_total
+        + Decimal(order.service_total)
+        + Decimal(order.utility_total),
     )
     db_session.add(sale)
     db_session.flush()
@@ -328,6 +354,7 @@ def _create_sale_from_order(
 @router.post("/tables", response_model=schemas.PosTableOut, status_code=201)
 def create_table(payload: schemas.PosTableCreate, db_session: Session = Depends(db.get_db)):
     name = payload.name.strip()
+    section = _normalize_table_section(payload.section)
     existing = (
         db_session.query(models.PosTable)
         .filter(models.PosTable.is_active == True, models.PosTable.name == name)  # noqa: E712
@@ -335,7 +362,7 @@ def create_table(payload: schemas.PosTableCreate, db_session: Session = Depends(
     )
     if existing:
         raise HTTPException(status_code=409, detail="La mesa ya existe")
-    table = models.PosTable(name=name)
+    table = models.PosTable(name=name, section=section)
     db_session.add(table)
     db_session.commit()
     db_session.refresh(table)
@@ -420,7 +447,7 @@ def create_order(payload: schemas.PosOrderCreate, db_session: Session = Depends(
         db_session.add(pos_item)
 
     subtotal, tax_total, discount_total, courtesy_total, total = _compute_order_totals(
-        items, payload.service_total
+        items, payload.service_total, Decimal(order.utility_total)
     )
     order.subtotal = subtotal
     order.tax_total = tax_total
@@ -467,6 +494,135 @@ def get_order(order_id: int, db_session: Session = Depends(db.get_db)):
     order = db_session.query(models.PosOrder).filter(models.PosOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+    return order
+
+
+@router.post("/orders/{order_id}/items", response_model=schemas.PosOrderOut)
+def append_items_to_order(
+    order_id: int,
+    payload: schemas.PosOrderAppendItems,
+    db_session: Session = Depends(db.get_db),
+):
+    order = db_session.query(models.PosOrder).filter(models.PosOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.status in {"closed", "void"}:
+        raise HTTPException(status_code=400, detail="La orden ya está finalizada")
+
+    now = datetime.now(timezone.utc)
+    existing_items = list(order.items)
+    new_items: list[models.PosOrderItem] = []
+
+    for item_payload in payload.items:
+        menu_item = _menu_item_or_404(db_session, item_payload.menu_item_id)
+        zone = "bar" if _norm(menu_item.category) in BAR_CATEGORY_KEYS else "kitchen"
+
+        qty = Decimal(item_payload.quantity)
+        unit_price = Decimal(item_payload.unit_price)
+        tax_rate = Decimal("0")
+        line_base = unit_price * qty
+        discount_amount = min(max(Decimal(item_payload.discount_amount), Decimal("0")), line_base)
+
+        if item_payload.courtesy:
+            line_subtotal = Decimal("0")
+            line_tax = Decimal("0")
+            line_total = Decimal("0")
+        else:
+            line_subtotal, line_tax, line_total = _compute_line_amounts(
+                quantity=qty,
+                unit_price=unit_price,
+                discount_amount=discount_amount,
+                tax_rate=tax_rate,
+            )
+
+        pos_item = models.PosOrderItem(
+            order_id=order.id,
+            menu_item_id=menu_item.id,
+            name=menu_item.name,
+            category=menu_item.category,
+            zone=zone,
+            quantity=qty,
+            unit_price=unit_price,
+            tax_rate=tax_rate,
+            discount_amount=discount_amount,
+            courtesy=item_payload.courtesy,
+            note=item_payload.note,
+            line_subtotal=line_subtotal,
+            line_tax=line_tax,
+            line_total=line_total,
+            sent_at=now,
+        )
+        db_session.add(pos_item)
+        new_items.append(pos_item)
+
+    subtotal, tax_total, discount_total, courtesy_total, total = _compute_order_totals(
+        existing_items + new_items,
+        Decimal(order.service_total),
+        Decimal(order.utility_total),
+    )
+    order.subtotal = subtotal
+    order.tax_total = tax_total
+    order.discount_total = discount_total
+    order.courtesy_total = courtesy_total
+    order.total = total
+    order.sent_at = now
+    if order.status == "delivered":
+        order.status = "sent"
+        order.delivered_at = None
+
+    db_session.add(order)
+    db_session.commit()
+    db_session.refresh(order)
+    _auto_print_comanda(
+        order_id=order.id,
+        table_name=order.table.name if order.table else f"Mesa {order.table_id}",
+        created_at=now,
+        items=new_items,
+    )
+    return order
+
+
+@router.delete("/orders/{order_id}/items/{item_id}", response_model=schemas.PosOrderOut)
+def delete_order_item(
+    order_id: int,
+    item_id: int,
+    db_session: Session = Depends(db.get_db),
+):
+    order = db_session.query(models.PosOrder).filter(models.PosOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    if order.status in {"closed", "void"}:
+        raise HTTPException(status_code=400, detail="La orden ya está finalizada")
+
+    item = (
+        db_session.query(models.PosOrderItem)
+        .filter(models.PosOrderItem.id == item_id, models.PosOrderItem.order_id == order.id)
+        .first()
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Item no encontrado en la orden")
+
+    db_session.delete(item)
+    db_session.flush()
+
+    remaining_items = list(order.items)
+    subtotal, tax_total, discount_total, courtesy_total, total = _compute_order_totals(
+        remaining_items,
+        Decimal(order.service_total),
+        Decimal(order.utility_total),
+    )
+    order.subtotal = subtotal
+    order.tax_total = tax_total
+    order.discount_total = discount_total
+    order.courtesy_total = courtesy_total
+    order.total = total
+    if order.status == "delivered":
+        order.status = "sent"
+        order.delivered_at = None
+
+    db_session.add(order)
+    db_session.commit()
+    db_session.refresh(order)
     return order
 
 
@@ -553,6 +709,11 @@ def mark_order_closed(
                     db_session.add(customer)
                     db_session.flush()
                     customer_id = customer.id
+
+    if payload is not None and payload.service_total is not None:
+        order.service_total = Decimal(payload.service_total)
+    if payload is not None and payload.utility_total is not None:
+        order.utility_total = Decimal(payload.utility_total)
 
     apply_inc = bool(payload.apply_inc) if payload is not None else False
     _recompute_order_for_close(order, apply_inc=apply_inc)

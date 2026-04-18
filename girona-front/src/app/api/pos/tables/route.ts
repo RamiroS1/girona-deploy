@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 type TableCreateBody = {
   name?: string;
+  section?: string;
 };
 
 function getBackendBaseUrl() {
@@ -87,8 +88,12 @@ export async function POST(request: Request) {
   }
 
   const name = (body.name ?? "").trim();
+  const section = (body.section ?? "").trim();
   if (!name) {
     return NextResponse.json({ message: "Nombre es requerido" }, { status: 400 });
+  }
+  if (!section) {
+    return NextResponse.json({ message: "Sección es requerida" }, { status: 400 });
   }
 
   const backendBaseUrl = getBackendBaseUrl();
@@ -99,7 +104,7 @@ export async function POST(request: Request) {
     response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, section }),
     });
   } catch (error) {
     return NextResponse.json(

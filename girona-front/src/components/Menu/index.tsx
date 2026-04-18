@@ -10,7 +10,6 @@ import {
   FaHotdog,
   FaStroopwafel,
 } from "react-icons/fa6";
-import { GrDocumentText } from "react-icons/gr";
 import { GiCutLemon, GiJug, GiSodaCan } from "react-icons/gi";
 import { LiaWineGlassAltSolid } from "react-icons/lia";
 import { LuCupSoda, LuEggFried } from "react-icons/lu";
@@ -1039,7 +1038,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
               startCreate();
             }
           }}
-          className="flex items-center rounded-xl bg-tertiary px-4 py-2 text-sm font-semibold text-dark transition hover:bg-tertiary/60"
+          className="flex items-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90"
         >
           {showCreate ? "Cerrar" : "Agregar categoría / item"}
         </button>
@@ -1602,17 +1601,6 @@ export default function Menu({ items }: { items: MenuItem[] }) {
                         <div className="rounded-lg bg-tertiary/20 px-3 py-1 text-sm font-semibold text-dark dark:bg-white/10 dark:text-white">
                           {formatCopPrice(item.price)}
                         </div>
-                        <Tooltip label={`Receta ${item.name}`}>
-                          <button
-                            type="button"
-                            onClick={() => openRecipeModal(item)}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-stroke bg-white text-dark transition hover:bg-gray-2 dark:border-dark-3 dark:bg-dark-2 dark:text-white dark:hover:bg-white/10"
-                            aria-label={`Receta ${item.name}`}
-                          >
-                            <span className="sr-only">{`Receta ${item.name}`}</span>
-                            <GrDocumentText className="h-5 w-5" aria-hidden="true" />
-                          </button>
-                        </Tooltip>
                         <Tooltip label={`Editar ${item.name}`}>
                           <button
                             type="button"

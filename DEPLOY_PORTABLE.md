@@ -5,7 +5,7 @@ Esta guía sirve para levantar el proyecto completo en otro dispositivo usando D
 ## Qué copiar
 
 - Todo el repositorio.
-- El backup de base de datos: `girona-back/girona_dev.backup`.
+- El backup de base de datos: `girona-back/girona_dev.backup` (archivo **grande**, a veces no va incluido en el clon de Git; si no está, pídelo a quien distribuye el proyecto o usa un respaldo tuyo y pásale la ruta a `restore-db.sh`).
 
 ## Requisitos
 
@@ -38,6 +38,8 @@ docker compose up -d --build
 
 - `deploy/portable/restore-db.sh`: restaura un backup `.backup` en el contenedor de PostgreSQL.
 - `deploy/portable/backup-db.sh`: genera un nuevo backup del contenedor PostgreSQL.
+
+Para copiar esos datos a **PostgreSQL en Render** (producción), ver `deploy/portable/IMPORTAR_DATOS_RENDER.md`.
 
 ## Flujo normal
 

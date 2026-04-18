@@ -19,6 +19,15 @@ dayjs.extend(timezone);
 const COLOMBIA_TZ = "America/Bogota";
 const INC_RATE = 0.08;
 const POS_HIDDEN_FINISHED_ORDERS_KEY = "pos_hidden_finished_orders_v1";
+const TABLE_SECTION_VALUES = [
+  "TERRAZA 1",
+  "TERRAZA 2",
+  "ZONA PICNIC",
+  "ZONA PRINCIPAL",
+] as const;
+
+type TableSectionValue = (typeof TABLE_SECTION_VALUES)[number];
+type TableSectionFilter = TableSectionValue | "TODAS";
 
 function loadHiddenFinishedOrderIdsFromStorage() {
   if (typeof window === "undefined") return new Set<number>();
@@ -68,6 +77,7 @@ type MenuIngredient = {
 type PosTable = {
   id: number;
   name: string;
+  section?: string | null;
   is_active: boolean;
 };
 
@@ -108,6 +118,7 @@ type PosOrderOut = {
   discount_total: number | string;
   courtesy_total: number | string;
   service_total: number | string;
+  utility_total?: number | string;
   total: number | string;
   opened_at: string;
   sent_at?: string | null;
@@ -140,6 +151,27 @@ function formatMoney(value: unknown) {
     maximumFractionDigits: 0,
     minimumFractionDigits: 0,
   }).format(num);
+}
+
+function parseCopAmount(value: string) {
+  const rawInput = value.trim();
+  if (!rawInput) return 0;
+
+  let normalized = rawInput.replace(/\s/g, "");
+  if (normalized.includes(".") && normalized.includes(",")) {
+    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(/,/g, ".");
+  }
+
+  normalized = normalized.replace(/[^\d.-]/g, "");
+  const parsed = Number.parseFloat(normalized);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed);
 }
 
 const BAR_CATEGORY_KEYS = new Set(
@@ -189,6 +221,14 @@ function categoryToId(scope: "rest" | "bar", category: string) {
   return `${scope}-cat-${categoryKey(category).replace(/[^a-z0-9]+/g, "-")}`;
 }
 
+function normalizeTableSection(rawSection?: string | null): TableSectionValue {
+  const section = (rawSection ?? "").trim().toUpperCase();
+  if ((TABLE_SECTION_VALUES as readonly string[]).includes(section)) {
+    return section as TableSectionValue;
+  }
+  return "ZONA PRINCIPAL";
+}
+
 const ORDER_STATUS_META: Record<
   string,
   {
@@ -216,65 +256,125 @@ function buildOrderPdf(order: PosOrderOut, tableName: string) {
   const doc = new jsPDF();
   const status = orderStatusMeta(order.status);
   const createdAt = toColombiaTime(order.opened_at);
+  const lineSubtotalOf = (item: PosOrderOut["items"][number]) =>
+    Number(item.line_subtotal ?? 0) || Math.max(0, Number(item.unit_price) * Number(item.quantity));
+  const lineTaxOf = (item: PosOrderOut["items"][number]) =>
+    Number(item.line_tax ?? 0) || lineSubtotalOf(item) * Number(item.tax_rate ?? 0);
+  const lineTotalOf = (item: PosOrderOut["items"][number]) =>
+    Number(item.line_total ?? 0) || lineSubtotalOf(item) + lineTaxOf(item);
 
-  doc.setFontSize(16);
-  doc.text(`Pedido #${order.id}`, 14, 16);
-  doc.setFontSize(11);
-  doc.text(`Mesa: ${tableName}`, 14, 26);
-  doc.text(`Estado: ${status.label}`, 14, 32);
-  doc.text(
-    `Creado: ${createdAt?.isValid() ? createdAt.format("DD/MM/YYYY HH:mm") : "—"}`,
-    14,
-    38,
-  );
-  doc.text(`Total: ${formatMoney(order.total)}`, 14, 44);
+  const drawPage = (
+    title: string,
+    items: PosOrderOut["items"],
+    totals: Array<[string, number | string]>,
+    options?: { includeZoneLabel?: boolean; footerNote?: string },
+  ) => {
+    doc.setFontSize(16);
+    doc.text(`Pedido #${order.id}`, 14, 16);
+    doc.setFontSize(11);
+    doc.text(`Mesa: ${tableName}`, 14, 26);
+    doc.text(`Estado: ${status.label}`, 14, 32);
+    doc.text(
+      `Creado: ${createdAt?.isValid() ? createdAt.format("DD/MM/YYYY HH:mm") : "—"}`,
+      14,
+      38,
+    );
 
-  doc.setFontSize(13);
-  doc.text("Comanda", 14, 54);
-  doc.setFontSize(10);
+    doc.setFontSize(13);
+    doc.text(title, 14, 50);
+    doc.setFontSize(10);
 
-  let y = 62;
-  order.items.forEach((item, index) => {
-    if (y > 270) {
-      doc.addPage();
-      y = 20;
-    }
-    const lineTotal =
-      Number(item.line_total ?? 0) ||
-      Number(item.unit_price) * Math.max(1, Number(item.quantity) || 1);
-
-    doc.text(`${index + 1}. ${item.name} x${item.quantity}`, 14, y);
-    doc.text(`${formatMoney(item.unit_price)} c/u`, 14, y + 6);
-    doc.text(`Zona: ${item.zone === "bar" ? "Bar" : "Restaurante"}`, 80, y + 6);
-    doc.text(`Total: ${formatMoney(lineTotal)}`, 196, y, { align: "right" });
-    if (item.note) {
-      doc.text(`Nota: ${item.note}`, 14, y + 12);
-      y += 20;
+    let y = 58;
+    if (items.length === 0) {
+      doc.text("Sin items en esta sección.", 14, y);
+      y += 12;
     } else {
-      y += 16;
+      items.forEach((item, index) => {
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+        }
+        const lineTotal = lineTotalOf(item);
+        doc.text(`${index + 1}. ${item.name} x${item.quantity}`, 14, y);
+        doc.text(`${formatMoney(item.unit_price)} c/u`, 14, y + 6);
+        if (options?.includeZoneLabel !== false) {
+          doc.text(`Zona: ${item.zone === "bar" ? "Bar" : "Restaurante"}`, 80, y + 6);
+        }
+        doc.text(`Total: ${formatMoney(lineTotal)}`, 196, y, { align: "right" });
+        if (item.note) {
+          doc.text(`Nota: ${item.note}`, 14, y + 12);
+          y += 20;
+        } else {
+          y += 16;
+        }
+      });
     }
-  });
 
-  y += 4;
-  const totals: Array<[string, number | string]> = [
-    ["Subtotal", order.subtotal],
-    ["INC", order.tax_total],
-    ["Descuentos", order.discount_total],
-    ["Cortesías", order.courtesy_total],
-    ["Servicio", order.service_total],
-    ["Total", order.total],
-  ];
+    y += 4;
+    doc.setFontSize(11);
+    totals.forEach(([label, value]) => {
+      if (y > 280) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.text(label, 140, y);
+      doc.text(formatMoney(value), 196, y, { align: "right" });
+      y += 8;
+    });
 
-  doc.setFontSize(11);
-  totals.forEach(([label, value]) => {
-    if (y > 280) {
-      doc.addPage();
-      y = 20;
+    if (options?.footerNote) {
+      if (y > 285) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFontSize(9);
+      doc.text(options.footerNote, 14, y + 2);
     }
-    doc.text(label, 140, y);
-    doc.text(formatMoney(value), 196, y, { align: "right" });
-    y += 8;
+  };
+
+  const restaurantItems = order.items.filter((item) => item.zone !== "bar");
+  const barItems = order.items.filter((item) => item.zone === "bar");
+
+  const buildSectionTotals = (items: PosOrderOut["items"]): Array<[string, number]> => {
+    const subtotal = items.reduce((acc, item) => acc + lineSubtotalOf(item), 0);
+    const inc = items.reduce((acc, item) => acc + lineTaxOf(item), 0);
+    const discounts = items.reduce((acc, item) => acc + Number(item.discount_amount || 0), 0);
+    const courtesies = items.reduce(
+      (acc, item) => acc + (item.courtesy ? Number(item.unit_price) * Number(item.quantity) : 0),
+      0,
+    );
+    const total = items.reduce((acc, item) => acc + lineTotalOf(item), 0);
+    return [
+      ["Subtotal", subtotal],
+      ["INC", inc],
+      ["Descuentos", discounts],
+      ["Cortesías", courtesies],
+      ["Total", total],
+    ];
+  };
+
+  drawPage("Comanda Restaurante", restaurantItems, buildSectionTotals(restaurantItems), {
+    includeZoneLabel: false,
   });
+  doc.addPage();
+  drawPage("Comanda Bar", barItems, buildSectionTotals(barItems), {
+    includeZoneLabel: false,
+  });
+  doc.addPage();
+  drawPage(
+    "Comanda General",
+    order.items,
+    [
+      ["Subtotal", order.subtotal],
+      ["INC", order.tax_total],
+      ["Descuentos", order.discount_total],
+      ["Cortesías", order.courtesy_total],
+      ["Servicio", order.service_total],
+      ["Utilidad", order.utility_total ?? 0],
+      ["Total", order.total],
+    ],
+    { includeZoneLabel: true },
+  );
 
   return doc;
 }
@@ -283,9 +383,23 @@ function buildOrderPdf(order: PosOrderOut, tableName: string) {
 function ViewOrderModal({
   order,
   onClose,
+  canAddToOrder,
+  onAddToOrder,
+  canPayOrder,
+  onPayOrder,
+  deletingItemId,
+  onDeleteItem,
+  deleteSuccessMessage,
 }: {
   order: PosOrderOut | null;
   onClose: () => void;
+  canAddToOrder: boolean;
+  onAddToOrder: (order: PosOrderOut) => void;
+  canPayOrder: boolean;
+  onPayOrder: (order: PosOrderOut) => void;
+  deletingItemId: number | null;
+  onDeleteItem: (order: PosOrderOut, itemId: number) => void;
+  deleteSuccessMessage: string | null;
 }) {
   if (!order) return null;
   const zoneLabel = (zone: string) => (zone === "bar" ? "Bar" : "Restaurante");
@@ -310,16 +424,35 @@ function ViewOrderModal({
               Mesa: {order.table_id} · Estado: {status.label}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-stroke px-3 py-1.5 text-sm font-semibold text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
-          >
-            Cerrar
-          </button>
+          <div className="flex items-center gap-2">
+            {canAddToOrder ? (
+              <button
+                type="button"
+                onClick={() => onAddToOrder(order)}
+                className="rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-white hover:bg-primary/90"
+              >
+                Añadir pedido
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-stroke px-3 py-1.5 text-sm font-semibold text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
+            >
+              Cerrar
+            </button>
+          </div>
         </div>
 
         <div className="max-h-[70vh] overflow-y-auto px-4 py-3 space-y-3">
+          {deleteSuccessMessage ? (
+            <div className="flex items-center gap-2 rounded-lg border border-green/40 bg-green/10 px-3 py-2 text-sm font-medium text-green">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green text-xs font-bold text-white">
+                ✓
+              </span>
+              <span>{deleteSuccessMessage}</span>
+            </div>
+          ) : null}
           {order.items.length === 0 ? (
             <p className="text-sm text-dark-6 dark:text-dark-6">Sin items.</p>
           ) : (
@@ -344,8 +477,18 @@ function ViewOrderModal({
                   {Number(item.discount_amount) > 0 ? formatMoney(item.discount_amount) : "0"}
                   {item.courtesy ? " · Cortesía" : ""}
                 </div>
-                <div className="mt-1 text-xs font-semibold text-dark dark:text-white">
-                  Total línea: {formatMoney(Number(item.line_total))}
+                <div className="mt-1 flex items-center justify-between gap-2 text-xs font-semibold text-dark dark:text-white">
+                  <span>Total línea: {formatMoney(Number(item.line_total))}</span>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteItem(order, item.id)}
+                    disabled={deletingItemId === item.id}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-red/70 text-red hover:bg-red/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Eliminar producto"
+                  >
+                    <span className="sr-only">Eliminar producto</span>
+                    <TrashIcon />
+                  </button>
                 </div>
               </div>
             ))
@@ -373,6 +516,15 @@ function ViewOrderModal({
               <span>{formatMoney(Number(order.total))}</span>
             </div>
           </div>
+          {canPayOrder ? (
+            <button
+              type="button"
+              onClick={() => onPayOrder(order)}
+              className="mt-2 w-full rounded-lg bg-red px-4 py-2 text-sm font-semibold text-white hover:bg-red/90"
+            >
+              Pagar
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -393,7 +545,10 @@ export default function PosScreen() {
   const [restSearch, setRestSearch] = useState("");
   const [barSearch, setBarSearch] = useState("");
   const [viewOrder, setViewOrder] = useState<PosOrderOut | null>(null);
+  const [deletingViewItemId, setDeletingViewItemId] = useState<number | null>(null);
+  const [viewDeleteSuccessMessage, setViewDeleteSuccessMessage] = useState<string | null>(null);
   const [cart, setCart] = useState<Record<number, PosOrderItemCreate>>({});
+  const [appendingOrderId, setAppendingOrderId] = useState<number | null>(null);
   const [noteInput, setNoteInput] = useState("");
   const [clearFinishedStatus, setClearFinishedStatus] = useState<
     "idle" | "loading"
@@ -403,6 +558,8 @@ export default function PosScreen() {
   );
 
   const [newTableName, setNewTableName] = useState("");
+  const [newTableSection, setNewTableSection] = useState<TableSectionValue>("ZONA PRINCIPAL");
+  const [selectedSectionFilter, setSelectedSectionFilter] = useState<TableSectionFilter>("TODAS");
   const [submitStatus, setSubmitStatus] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
@@ -425,6 +582,8 @@ export default function PosScreen() {
   const [customerEmailInput, setCustomerEmailInput] = useState("");
   const [issueElectronicInvoice, setIssueElectronicInvoice] = useState(false);
   const [applyConsumptionTax, setApplyConsumptionTax] = useState(false);
+  const [serviceTipInput, setServiceTipInput] = useState("");
+  const [utilityInput, setUtilityInput] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
@@ -454,7 +613,7 @@ export default function PosScreen() {
       const qty = item.quantity;
       const price = item.unit_price;
       const lineBase = price * qty;
-      const lineDiscount = lineBase * (item.discount_rate ?? 0);
+      const lineDiscount = Math.min(lineBase, Math.max(0, item.discount_rate ?? 0));
       const lineSubtotal = Math.max(lineBase - lineDiscount, 0);
       const lineTax = lineSubtotal * (item.tax_rate ?? 0);
       subtotal += item.courtesy ? 0 : lineSubtotal;
@@ -474,15 +633,21 @@ export default function PosScreen() {
   const paymentPreview = useMemo(() => {
     if (!paymentOrder) return null;
     const subtotal = Number(paymentOrder.subtotal) || 0;
-    const serviceTotal = Number(paymentOrder.service_total) || 0;
+    const defaultServiceTotal = Math.max(0, Number(paymentOrder.service_total) || 0);
+    const defaultUtilityTotal = Math.max(0, Number(paymentOrder.utility_total) || 0);
+    const serviceTotal =
+      serviceTipInput.trim() === "" ? defaultServiceTotal : parseCopAmount(serviceTipInput);
+    const utilityTotal =
+      utilityInput.trim() === "" ? defaultUtilityTotal : parseCopAmount(utilityInput);
     const incTotal = applyConsumptionTax ? subtotal * INC_RATE : 0;
     return {
       subtotal,
       incTotal,
       serviceTotal,
-      total: subtotal + incTotal + serviceTotal,
+      utilityTotal,
+      total: subtotal + incTotal + serviceTotal + utilityTotal,
     };
-  }, [paymentOrder, applyConsumptionTax]);
+  }, [paymentOrder, applyConsumptionTax, serviceTipInput, utilityInput]);
 
   const activeOrders = useMemo(
     () => orders.filter((o) => !["closed", "void"].includes(o.status)),
@@ -497,9 +662,66 @@ export default function PosScreen() {
       ),
     [orders, hiddenFinishedOrderIds],
   );
+  const visibleTables = useMemo(
+    () =>
+      tables.filter((table) => {
+        if (selectedSectionFilter === "TODAS") return true;
+        return normalizeTableSection(table.section) === selectedSectionFilter;
+      }),
+    [tables, selectedSectionFilter],
+  );
+  const activeOrderByTable = useMemo(() => {
+    const map = new Map<number, PosOrderOut>();
+    for (const order of orders) {
+      if (["closed", "void"].includes(order.status)) continue;
+      if (!map.has(order.table_id)) {
+        map.set(order.table_id, order);
+      }
+    }
+    return map;
+  }, [orders]);
+  const appendingBaseOrder = useMemo(() => {
+    if (!appendingOrderId) return null;
+    return orders.find((order) => order.id === appendingOrderId) ?? null;
+  }, [orders, appendingOrderId]);
+  useEffect(() => {
+    if (!viewDeleteSuccessMessage) return;
+    const timeoutId = window.setTimeout(() => {
+      setViewDeleteSuccessMessage(null);
+    }, 2200);
+    return () => window.clearTimeout(timeoutId);
+  }, [viewDeleteSuccessMessage]);
+  useEffect(() => {
+    if (
+      appendingBaseOrder &&
+      ["closed", "void"].includes(appendingBaseOrder.status) &&
+      mode === "create"
+    ) {
+      setAppendingOrderId(null);
+    }
+  }, [appendingBaseOrder, mode]);
 
   function getTableName(tableId: number) {
     return tables.find((t) => t.id === tableId)?.name ?? `Mesa ${tableId}`;
+  }
+
+  function openAppendOrderFlow(order: PosOrderOut) {
+    setViewOrder(null);
+    setSelectedTableId(order.table_id);
+    setMode("create");
+    setAppendingOrderId(order.id);
+    setCart({});
+    setNoteInput("");
+    setSubmitStatus({ kind: "idle" });
+  }
+
+  function openPayOrderFlow(order: PosOrderOut) {
+    setViewOrder(null);
+    if (order.status === "delivered") {
+      openPaymentModal(order);
+      return;
+    }
+    openWaiterModal(order);
   }
 
   function handlePreviewPdf(order: PosOrderOut) {
@@ -554,6 +776,8 @@ export default function PosScreen() {
       customer_phone?: string | null;
       customer_email?: string | null;
       apply_inc?: boolean;
+      service_total?: number;
+      utility_total?: number;
     },
   ): Promise<PosOrderOut | null> {
     try {
@@ -561,6 +785,20 @@ export default function PosScreen() {
       const closePayload = {
         ...(payload ?? {}),
         apply_inc: payload?.apply_inc ?? applyConsumptionTax,
+        service_total:
+          payload?.service_total ??
+          (paymentOrder
+            ? serviceTipInput.trim() === ""
+              ? Math.max(0, Number(paymentOrder.service_total) || 0)
+              : parseCopAmount(serviceTipInput)
+            : 0),
+        utility_total:
+          payload?.utility_total ??
+          (paymentOrder
+            ? utilityInput.trim() === ""
+              ? Math.max(0, Number(paymentOrder.utility_total) || 0)
+              : parseCopAmount(utilityInput)
+            : 0),
       };
       const res = await fetch(`/api/pos/orders/${orderId}/close`, {
         method: "POST",
@@ -699,6 +937,33 @@ export default function PosScreen() {
     }
   }
 
+  async function handleDeleteOrderItem(order: PosOrderOut, itemId: number) {
+    if (!window.confirm("¿Eliminar este producto del pedido?")) return;
+    try {
+      setDeletingViewItemId(itemId);
+      setViewDeleteSuccessMessage(null);
+      const res = await fetch(`/api/pos/orders/${order.id}/items/${itemId}`, { method: "DELETE" });
+      const payload = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        window.alert(
+          (typeof payload?.message === "string" && payload.message) ||
+            (typeof payload?.detail === "string" && payload.detail) ||
+            "No se pudo eliminar el producto del pedido.",
+        );
+        return;
+      }
+
+      const updatedOrder = payload as PosOrderOut;
+      setOrders((prev) => prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o)));
+      setViewOrder(updatedOrder);
+      setViewDeleteSuccessMessage("Producto eliminado correctamente.");
+    } catch {
+      window.alert("Error eliminando el producto del pedido.");
+    } finally {
+      setDeletingViewItemId(null);
+    }
+  }
+
   async function handleClearFinishedOrders() {
     if (finishedOrders.length === 0) return;
     if (!window.confirm("¿Limpiar historial de pedidos finalizados?")) return;
@@ -810,6 +1075,8 @@ export default function PosScreen() {
     setCustomerEmailInput("");
     setIssueElectronicInvoice(false);
     setApplyConsumptionTax(false);
+    setServiceTipInput("");
+    setUtilityInput("");
     setPaymentStatus({ kind: "idle" });
   }
 
@@ -817,6 +1084,8 @@ export default function PosScreen() {
     setPaymentOrder(order);
     setPaymentModalOpen(true);
     resetPaymentForm();
+    setServiceTipInput(String(Math.max(0, Number(order.service_total) || 0)));
+    setUtilityInput(String(Math.max(0, Number(order.utility_total) || 0)));
   }
 
   function closePaymentModal() {
@@ -1073,7 +1342,7 @@ export default function PosScreen() {
       const res = await fetch("/api/pos/tables", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, section: newTableSection }),
       });
       const payload = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
@@ -1087,6 +1356,7 @@ export default function PosScreen() {
       }
       setTables((prev) => [...prev, payload as PosTable]);
       setNewTableName("");
+      setSelectedSectionFilter(newTableSection);
       setSubmitStatus({ kind: "success", message: "Mesa creada." });
     } catch {
       setSubmitStatus({ kind: "error", message: "Error creando la mesa." });
@@ -1105,43 +1375,76 @@ export default function PosScreen() {
 
     setSubmitStatus({ kind: "loading" });
     try {
-      const res = await fetch("/api/pos/orders", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          table_id: selectedTableId,
-          service_total: 0,
-          items: cartItems.map((ci) => {
-            const lineBase = ci.unit_price * ci.quantity;
-            const discount_amount = lineBase * (ci.discount_rate ?? 0);
-            return {
-              menu_item_id: ci.menu_item_id,
-              quantity: ci.quantity,
-              unit_price: ci.unit_price,
-              tax_rate: ci.tax_rate ?? 0,
-              discount_amount,
-              courtesy: ci.courtesy,
-              note: ci.note ?? null,
-            };
-          }),
+      const payloadBody = {
+        items: cartItems.map((ci) => {
+          const lineBase = ci.unit_price * ci.quantity;
+          const discount_amount = Math.min(lineBase, Math.max(0, ci.discount_rate ?? 0));
+          return {
+            menu_item_id: ci.menu_item_id,
+            quantity: ci.quantity,
+            unit_price: ci.unit_price,
+            tax_rate: ci.tax_rate ?? 0,
+            discount_amount,
+            courtesy: ci.courtesy,
+            note: ci.note ?? null,
+          };
         }),
-      });
+      };
+      const isAppending = Boolean(appendingOrderId);
+      const res = await fetch(
+        isAppending ? `/api/pos/orders/${appendingOrderId}/items` : "/api/pos/orders",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            isAppending
+              ? payloadBody
+              : {
+                  table_id: selectedTableId,
+                  service_total: 0,
+                  ...payloadBody,
+                },
+          ),
+        },
+      );
       const payload = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
         setSubmitStatus({
           kind: "error",
           message:
             (typeof payload?.message === "string" && payload.message) ||
-            "No se pudo crear la orden.",
+            (isAppending
+              ? "No se pudieron agregar items a la comanda."
+              : "No se pudo crear la orden."),
         });
         return;
       }
-      setOrders((prev) => [payload as PosOrderOut, ...prev]);
+      const updatedOrder = payload as PosOrderOut;
+      setOrders((prev) => {
+        const existingIdx = prev.findIndex((o) => o.id === updatedOrder.id);
+        if (existingIdx === -1) return [updatedOrder, ...prev];
+        const clone = [...prev];
+        clone[existingIdx] = updatedOrder;
+        return clone;
+      });
       setCart({});
       setNoteInput("");
-      setSubmitStatus({ kind: "success", message: "Orden creada." });
+      if (isAppending) {
+        setAppendingOrderId(updatedOrder.id);
+      } else {
+        setAppendingOrderId(null);
+      }
+      setSubmitStatus({
+        kind: "success",
+        message: isAppending ? "Items añadidos a la comanda." : "Orden creada.",
+      });
     } catch {
-      setSubmitStatus({ kind: "error", message: "Error creando la orden." });
+      setSubmitStatus({
+        kind: "error",
+        message: appendingOrderId
+          ? "Error agregando items a la comanda."
+          : "Error creando la orden.",
+      });
     }
   }
 
@@ -1162,6 +1465,17 @@ export default function PosScreen() {
               placeholder="Mesa 1"
               className="rounded-lg border border-stroke bg-transparent px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:text-white"
             />
+            <select
+              value={newTableSection}
+              onChange={(e) => setNewTableSection(e.target.value as TableSectionValue)}
+              className="rounded-lg border border-stroke bg-transparent px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:text-white"
+            >
+              {TABLE_SECTION_VALUES.map((section) => (
+                <option key={section} value={section}>
+                  {section}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={handleCreateTable}
@@ -1172,10 +1486,29 @@ export default function PosScreen() {
           </div>
         </div>
 
+        <div className="mb-4 flex flex-wrap gap-2">
+          {(["TODAS", ...TABLE_SECTION_VALUES] as const).map((section) => (
+            <button
+              key={section}
+              type="button"
+              onClick={() => setSelectedSectionFilter(section)}
+              className={
+                "rounded-lg border px-3 py-1.5 text-xs font-semibold transition " +
+                (selectedSectionFilter === section
+                  ? "border-primary bg-primary text-white"
+                  : "border-stroke bg-white text-dark hover:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white")
+              }
+            >
+              {section}
+            </button>
+          ))}
+        </div>
+
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-          {tables.map((table) => (
+          {visibleTables.map((table) => (
             (() => {
-              const latestOrder = orders.find((o) => o.table_id === table.id);
+              const latestOrder = activeOrderByTable.get(table.id);
+              const tableSection = normalizeTableSection(table.section);
               return (
             <div
               key={table.id}
@@ -1199,6 +1532,9 @@ export default function PosScreen() {
               style={{ backgroundImage: "url('/images/cards/mesa.jpg')", backgroundSize: "cover" }}
             >
               <div className="absolute inset-0 bg-black/35" />
+              <div className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-semibold text-dark shadow-sm">
+                {tableSection}
+              </div>
               <button
                 type="button"
                 onClick={(e) => {
@@ -1212,7 +1548,7 @@ export default function PosScreen() {
               </button>
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/40 to-transparent px-3 pb-2 pt-10 text-white">
                 <div className="mb-2 flex justify-center gap-2">
-                  {latestOrder && !["closed", "void"].includes(latestOrder.status) ? (
+                  {latestOrder ? (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -1224,18 +1560,21 @@ export default function PosScreen() {
                       Ver pedido
                     </button>
                   ) : null}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedTableId(table.id);
-                      setMode("create");
-                      setCart({});
-                    }}
-                    className="rounded-lg bg-primary px-2 py-1 text-xs font-semibold text-white hover:bg-primary/90"
-                  >
-                    Realizar pedido
-                  </button>
+                  {!latestOrder ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedTableId(table.id);
+                        setMode("create");
+                        setAppendingOrderId(null);
+                        setCart({});
+                      }}
+                      className="rounded-lg bg-primary px-2 py-1 text-xs font-semibold text-white hover:bg-primary/90"
+                    >
+                      Realizar pedido
+                    </button>
+                  ) : null}
                 </div>
                 <div className="text-center text-sm font-semibold">{table.name}</div>
               </div>
@@ -1651,6 +1990,32 @@ export default function PosScreen() {
                 Si no lo marcas, el pedido se cierra sin INC.
               </p>
 
+              <div className="mt-3">
+                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                  Propina (COP)
+                </label>
+                <input
+                  value={serviceTipInput}
+                  onChange={(e) => setServiceTipInput(e.target.value)}
+                  inputMode="decimal"
+                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                  placeholder="Ej: 5000"
+                />
+              </div>
+
+              <div className="mt-3">
+                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                  Utilidad (COP)
+                </label>
+                <input
+                  value={utilityInput}
+                  onChange={(e) => setUtilityInput(e.target.value)}
+                  inputMode="decimal"
+                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                  placeholder="Ej: 3000"
+                />
+              </div>
+
               {paymentPreview ? (
                 <div className="mt-3 space-y-1 rounded-md border border-primary/20 bg-white/70 p-2 text-xs text-dark dark:border-dark-3 dark:bg-dark-2 dark:text-white">
                   <div className="flex items-center justify-between">
@@ -1664,6 +2029,10 @@ export default function PosScreen() {
                   <div className="flex items-center justify-between">
                     <span>Servicio</span>
                     <span>{formatMoney(paymentPreview.serviceTotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Utilidad</span>
+                    <span>{formatMoney(paymentPreview.utilityTotal)}</span>
                   </div>
                   <div className="flex items-center justify-between font-semibold">
                     <span>Total a cobrar</span>
@@ -1880,21 +2249,26 @@ export default function PosScreen() {
           onClick={() => {
             setMode("idle");
             setSelectedTableId(null);
+            setAppendingOrderId(null);
             setCart({});
+            setNoteInput("");
           }}
         >
           <div
-            className="grid h-[90vh] w-full max-w-6xl grid-cols-1 gap-4 overflow-hidden rounded-2xl border border-stroke bg-white p-4 shadow-2xl opacity-0 animate-[fadeIn_200ms_ease-out_60ms_forwards] dark:border-dark-3 dark:bg-gray-dark md:grid-cols-[2fr_1fr]"
+            className="grid h-[90vh] w-full max-w-[96vw] grid-cols-1 gap-4 overflow-hidden rounded-2xl border border-stroke bg-white p-4 shadow-2xl opacity-0 animate-[fadeIn_200ms_ease-out_60ms_forwards] dark:border-dark-3 dark:bg-gray-dark md:grid-cols-[2.2fr_1.3fr] xl:max-w-[1500px]"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="overflow-y-auto pr-2">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h3 className="text-base font-semibold text-dark dark:text-white">
-                    Realizar pedido - {tables.find((t) => t.id === selectedTableId)?.name}
+                    {appendingBaseOrder ? "Añadir pedido" : "Realizar pedido"} -{" "}
+                    {tables.find((t) => t.id === selectedTableId)?.name}
                   </h3>
                   <p className="text-xs text-body-color dark:text-dark-6">
-                    Selecciona productos (Restaurante / Bar)
+                    {appendingBaseOrder
+                      ? `Comanda #${appendingBaseOrder.id}: agrega nuevos items (Restaurante / Bar)`
+                      : "Selecciona productos (Restaurante / Bar)"}
                   </p>
                 </div>
                 <button
@@ -1902,7 +2276,9 @@ export default function PosScreen() {
                   onClick={() => {
                     setMode("idle");
                     setSelectedTableId(null);
+                    setAppendingOrderId(null);
                     setCart({});
+                    setNoteInput("");
                   }}
                   className="rounded-lg border border-stroke px-3 py-1.5 text-sm font-semibold text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
                 >
@@ -2121,128 +2497,167 @@ export default function PosScreen() {
               <div className="mt-2 text-sm text-body-color dark:text-dark-6">
                 Mesa: {tables.find((t) => t.id === selectedTableId)?.name}
               </div>
-
-              <div className="mt-3 space-y-3">
-                {cartItems.length === 0 ? (
-                  <p className="text-sm text-dark-6 dark:text-dark-6">Agrega items del menú.</p>
-                ) : (
-                  cartItems.map((ci) => (
-                    <div
-                      key={ci.menu_item_id}
-                      className="rounded-xl border border-stroke bg-gray-1 p-3 text-sm text-dark dark:border-dark-3 dark:bg-dark-2 dark:text-white"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="font-semibold">
-                          {menuItems.find((m) => m.id === ci.menu_item_id)?.name ?? "Item"}
+              {appendingBaseOrder ? (
+                <div className="mt-3 rounded-xl border border-stroke bg-gray-1 p-3 text-sm dark:border-dark-3 dark:bg-dark-2">
+                  <div className="mb-2 font-semibold text-dark dark:text-white">
+                    Comanda actual #{appendingBaseOrder.id}
+                  </div>
+                  <div className="max-h-60 overflow-y-auto pr-1 text-xs text-dark dark:text-white">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {appendingBaseOrder.items.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-lg border border-stroke bg-white/80 p-2 dark:border-dark-3 dark:bg-dark-3/30"
+                      >
+                        <div className="line-clamp-2 font-medium text-dark dark:text-white">
+                          {item.quantity} x {item.name}
                         </div>
-                        <div className="text-primary">{formatMoney(ci.unit_price)}</div>
+                        <div className="mt-1 font-semibold text-primary">
+                          {formatMoney(Number(item.line_total))}
+                        </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                        <label className="flex items-center gap-1">
-                          Cant.
-                          <input
-                            type="number"
-                            min={1}
-                            value={ci.quantity}
-                            onChange={(e) =>
-                              updateCart(ci.menu_item_id, (curr) => ({
-                                ...curr,
-                                quantity: Math.max(1, Number(e.target.value) || 1),
-                              }))
-                            }
-                            className="w-16 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
-                          />
-                        </label>
-                        <label className="flex items-center gap-1">
-                          INC (al pagar)
-                          <input
-                            type="number"
-                            min={0}
-                            max={0}
-                            step="0.01"
-                            value={0}
-                            readOnly
-                            className="w-20 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
-                          />
-                        </label>
-                        <label className="flex items-center gap-1">
-                          Descuento
-                          <input
-                            type="number"
-                            min={0}
-                            max={1}
-                            step="0.01"
-                            value={ci.discount_rate ?? ""}
-                            onChange={(e) =>
-                              updateCart(ci.menu_item_id, (curr) => ({
-                                ...curr,
-                                discount_rate:
-                                  e.target.value === ""
-                                    ? null
-                                    : Math.min(1, Math.max(0, Number(e.target.value) || 0)),
-                              }))
-                            }
-                            className="w-24 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
-                          />
-                        </label>
-                        <label className="inline-flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={ci.courtesy}
-                            onChange={(e) =>
-                              updateCart(ci.menu_item_id, (curr) => ({
-                                ...curr,
-                                courtesy: e.target.checked,
-                              }))
-                            }
-                            className="h-4 w-4"
-                          />
-                          Cortesía
-                        </label>
-                      </div>
-                      <div className="mt-2 text-xs text-body-color dark:text-dark-6">
-                        Total línea:{" "}
-                        {formatMoney(
-                          ci.courtesy
-                            ? 0
-                            : Math.max(
-                                  ci.unit_price * ci.quantity -
-                                    ci.unit_price * ci.quantity * (ci.discount_rate ?? 0),
-                                  0,
-                                ) * (1 + (ci.tax_rate ?? 0)),
-                        )}
-                      </div>
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCart((prev) => {
-                              const clone = { ...prev };
-                              delete clone[ci.menu_item_id];
-                              return clone;
-                            })
-                          }
-                          className="rounded-lg border border-stroke px-3 py-1 text-xs font-semibold text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                      <div className="mt-2">
-                        <textarea
-                          value={ci.note ?? ""}
-                          onChange={(e) =>
-                            updateCart(ci.menu_item_id, (curr) => ({
-                              ...curr,
-                              note: e.target.value || null,
-                            }))
-                          }
-                          placeholder="Notas para cocina/bar"
-                          rows={2}
-                          className="w-full resize-none rounded border border-stroke bg-transparent px-3 py-2 text-xs text-dark outline-none dark:border-dark-3 dark:text-white"
-                        />
-                      </div>
+                    ))}
                     </div>
-                  ))
+                  </div>
+                  <div className="mt-2 border-t border-stroke pt-2 text-xs text-dark dark:border-dark-3 dark:text-white">
+                    Total actual:{" "}
+                    <span className="font-semibold">{formatMoney(Number(appendingBaseOrder.total))}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mt-3">
+                {cartItems.length === 0 ? (
+                  <p className="text-sm text-dark-6 dark:text-dark-6">
+                    {appendingBaseOrder
+                      ? "Agrega nuevos items para añadir a la comanda."
+                      : "Agrega items del menú."}
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {cartItems.map((ci) => (
+                      <div
+                        key={ci.menu_item_id}
+                        className="rounded-xl border border-stroke bg-gray-1 p-3 text-sm text-dark dark:border-dark-3 dark:bg-dark-2 dark:text-white"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-semibold">
+                            {menuItems.find((m) => m.id === ci.menu_item_id)?.name ?? "Item"}
+                          </div>
+                          <div className="text-primary">{formatMoney(ci.unit_price)}</div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                          <label className="flex items-center gap-1">
+                            Cant.
+                            <input
+                              type="number"
+                              min={1}
+                              value={ci.quantity}
+                              onChange={(e) =>
+                                updateCart(ci.menu_item_id, (curr) => ({
+                                  ...curr,
+                                  quantity: Math.max(1, Number(e.target.value) || 1),
+                                }))
+                              }
+                              className="w-16 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            INC (al pagar)
+                            <input
+                              type="number"
+                              min={0}
+                              max={0}
+                              step="0.01"
+                              value={0}
+                              readOnly
+                              className="w-20 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            Descuento (COP)
+                            <input
+                              type="number"
+                              min={0}
+                              step="1"
+                              value={ci.discount_rate ?? ""}
+                              onChange={(e) =>
+                                updateCart(ci.menu_item_id, (curr) => ({
+                                  ...curr,
+                                  discount_rate:
+                                    e.target.value === ""
+                                      ? null
+                                      : Math.min(
+                                          curr.unit_price * curr.quantity,
+                                          Math.max(0, Number(e.target.value) || 0),
+                                        ),
+                                }))
+                              }
+                              className="w-24 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
+                            />
+                          </label>
+                          <label className="inline-flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={ci.courtesy}
+                              onChange={(e) =>
+                                updateCart(ci.menu_item_id, (curr) => ({
+                                  ...curr,
+                                  courtesy: e.target.checked,
+                                }))
+                              }
+                              className="h-4 w-4"
+                            />
+                            Cortesía
+                          </label>
+                        </div>
+                        <div className="mt-2 text-xs text-body-color dark:text-dark-6">
+                          Total línea:{" "}
+                          {formatMoney(
+                            ci.courtesy
+                              ? 0
+                              : Math.max(
+                                    ci.unit_price * ci.quantity -
+                                      Math.min(
+                                        ci.unit_price * ci.quantity,
+                                        Math.max(0, ci.discount_rate ?? 0),
+                                      ),
+                                    0,
+                                  ) * (1 + (ci.tax_rate ?? 0)),
+                          )}
+                        </div>
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCart((prev) => {
+                                const clone = { ...prev };
+                                delete clone[ci.menu_item_id];
+                                return clone;
+                              })
+                            }
+                            className="rounded-lg border border-stroke px-3 py-1 text-xs font-semibold text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                        <div className="mt-2">
+                          <textarea
+                            value={ci.note ?? ""}
+                            onChange={(e) =>
+                              updateCart(ci.menu_item_id, (curr) => ({
+                                ...curr,
+                                note: e.target.value || null,
+                              }))
+                            }
+                            placeholder="Notas para cocina/bar"
+                            rows={2}
+                            className="w-full resize-none rounded border border-stroke bg-transparent px-3 py-2 text-xs text-dark outline-none dark:border-dark-3 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
@@ -2275,7 +2690,7 @@ export default function PosScreen() {
                   onClick={handleCreateOrder}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90"
                 >
-                  Enviar comanda
+                  {appendingBaseOrder ? "Añadir a la comanda" : "Enviar comanda"}
                 </button>
                 <button
                   type="button"
@@ -2288,7 +2703,27 @@ export default function PosScreen() {
                   <span className="text-sm font-medium text-red">{submitStatus.message}</span>
                 )}
                 {submitStatus.kind === "success" && (
-                  <span className="text-sm font-medium text-green">{submitStatus.message}</span>
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-green">{submitStatus.message}</span>
+                    {appendingBaseOrder ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetOrder = appendingBaseOrder;
+                          setMode("idle");
+                          setSelectedTableId(null);
+                          setCart({});
+                          setNoteInput("");
+                          if (targetOrder) {
+                            setViewOrder(targetOrder);
+                          }
+                        }}
+                        className="rounded-lg border border-primary/60 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"
+                      >
+                        Ver pedido
+                      </button>
+                    ) : null}
+                  </div>
                 )}
               </div>
             </div>
@@ -2298,7 +2733,17 @@ export default function PosScreen() {
 
       <ViewOrderModal
         order={viewOrder}
-        onClose={() => setViewOrder(null)}
+        onClose={() => {
+          setViewOrder(null);
+          setViewDeleteSuccessMessage(null);
+        }}
+        canAddToOrder={Boolean(viewOrder && !["closed", "void"].includes(viewOrder.status))}
+        onAddToOrder={openAppendOrderFlow}
+        canPayOrder={Boolean(viewOrder && !["closed", "void"].includes(viewOrder.status))}
+        onPayOrder={openPayOrderFlow}
+        deletingItemId={deletingViewItemId}
+        onDeleteItem={handleDeleteOrderItem}
+        deleteSuccessMessage={viewDeleteSuccessMessage}
       />
     </div>
   );

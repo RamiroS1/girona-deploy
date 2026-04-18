@@ -440,10 +440,14 @@ def build_bill_payload(
             "email": settings.establishment_email,
             "municipality_id": settings.establishment_municipality_id,
         }
+    base_amount = Decimal(str(sale.subtotal or 0)).quantize(Decimal("0.01"))
     service_amount = Decimal(str(sale.service_total or 0)).quantize(Decimal("0.01"))
+    utility_amount = Decimal(str(getattr(sale, "utility_total", 0) or 0)).quantize(
+        Decimal("0.01")
+    )
+    allowance_charges: list[dict[str, Any]] = []
     if service_amount > 0:
-        base_amount = Decimal(str(sale.subtotal or 0)).quantize(Decimal("0.01"))
-        payload["allowance_charges"] = [
+        allowance_charges.append(
             {
                 "concept_type": "03",
                 "is_surcharge": True,
@@ -451,7 +455,19 @@ def build_bill_payload(
                 "base_amount": f"{base_amount:.2f}",
                 "amount": f"{service_amount:.2f}",
             }
-        ]
+        )
+    if utility_amount > 0:
+        allowance_charges.append(
+            {
+                "concept_type": "03",
+                "is_surcharge": True,
+                "reason": "Utilidad",
+                "base_amount": f"{base_amount:.2f}",
+                "amount": f"{utility_amount:.2f}",
+            }
+        )
+    if allowance_charges:
+        payload["allowance_charges"] = allowance_charges
     return payload
 
 

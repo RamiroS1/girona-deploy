@@ -284,11 +284,13 @@ class ConsumeSaleResult(BaseModel):
 
 class PosTableCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    section: str = Field(default="ZONA PRINCIPAL", min_length=1, max_length=100)
 
 
 class PosTableOut(BaseModel):
     id: int
     name: str
+    section: str
     is_active: bool
     created_at: datetime
 
@@ -309,6 +311,10 @@ class PosOrderItemCreate(BaseModel):
 class PosOrderCreate(BaseModel):
     table_id: int
     service_total: Decimal = Field(default=Decimal("0"), ge=0)
+    items: list[PosOrderItemCreate] = Field(min_length=1)
+
+
+class PosOrderAppendItems(BaseModel):
     items: list[PosOrderItemCreate] = Field(min_length=1)
 
 
@@ -347,6 +353,7 @@ class PosOrderOut(BaseModel):
     discount_total: Decimal
     courtesy_total: Decimal
     service_total: Decimal
+    utility_total: Decimal
     total: Decimal
     opened_at: datetime
     sent_at: datetime | None
@@ -369,6 +376,8 @@ class PosOrderClose(BaseModel):
     customer_identity_document: str | None = Field(default=None, min_length=1, max_length=100)
     customer_phone: str | None = Field(default=None, max_length=50)
     apply_inc: bool = False
+    service_total: Decimal | None = Field(default=None, ge=0)
+    utility_total: Decimal | None = Field(default=None, ge=0)
 
 
 class SaleItemOut(BaseModel):
@@ -399,6 +408,7 @@ class SaleOut(BaseModel):
     discount_count: int = 0
     courtesy_count: int = 0
     service_total: Decimal
+    utility_total: Decimal
     total: Decimal
     created_at: datetime
     electronic_invoice_status: str | None = None
@@ -482,6 +492,7 @@ class SalesByWaiterOut(BaseModel):
     waiter_id: int | None
     name: str
     quantity: Decimal
+    service_total: Decimal
     total: Decimal
 
 

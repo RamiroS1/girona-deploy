@@ -40,42 +40,29 @@ function errorToJson(error: unknown) {
   return { message: String(error) };
 }
 
-type CloseOrderBody = {
-  customer_id?: number | null;
-  customer_name?: string;
-  customer_identity_document?: string;
-  customer_phone?: string | null;
-  apply_inc?: boolean;
-  service_total?: number;
-  utility_total?: number;
-};
-
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ orderId?: string }> },
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ orderId?: string; itemId?: string }> },
 ) {
-  const { orderId } = await params;
-  if (!orderId) {
-    return NextResponse.json({ message: "ID de orden requerido" }, { status: 400 });
+  const { orderId, itemId } = await params;
+  if (!orderId || !itemId) {
+    return NextResponse.json({ message: "ID de orden e item requeridos" }, { status: 400 });
   }
 
-  const body = (await request.json().catch(() => null)) as CloseOrderBody | null;
-
   const backendBaseUrl = getBackendBaseUrl();
-  const url = toAbsoluteUrl(backendBaseUrl, `/pos/orders/${orderId}/close`);
+  const url = toAbsoluteUrl(backendBaseUrl, `/pos/orders/${orderId}/items/${itemId}`);
 
   let response: Response;
   try {
     response = await fetch(url, {
-      method: "POST",
+      method: "DELETE",
       headers: { "content-type": "application/json" },
-      body: body ? JSON.stringify(body) : null,
     });
   } catch (error) {
     return NextResponse.json(
       {
         message:
-          "No se pudo conectar con el backend para marcar la orden como pagada. Verifica que Uvicorn esté corriendo y que `BACKEND_URL` sea accesible desde el servidor de Next.js.",
+          "No se pudo conectar con el backend para eliminar el item de la orden. Verifica que Uvicorn esté corriendo y que `BACKEND_URL` sea accesible desde el servidor de Next.js.",
         backendUrl: backendBaseUrl,
         triedUrl: url,
         error: errorToJson(error),
@@ -89,7 +76,7 @@ export async function POST(
     const message =
       (typeof (payload as any)?.detail === "string" && (payload as any).detail) ||
       (typeof (payload as any)?.message === "string" && (payload as any).message) ||
-      "No se pudo marcar la orden como pagada";
+      "No se pudo eliminar el item de la orden";
 
     return NextResponse.json(
       { message, error: payload, backendUrl: backendBaseUrl, triedUrl: url },

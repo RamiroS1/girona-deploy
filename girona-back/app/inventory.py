@@ -574,6 +574,11 @@ def create_recipe(payload: schemas.RecipeCreate, db_session: Session = Depends(d
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nombre es requerido")
+    if not payload.ingredients:
+        raise HTTPException(
+            status_code=400,
+            detail="Debe agregar al menos un ingrediente con cantidad para la receta.",
+        )
 
     existing_menu_item = (
         db_session.query(models.MenuItem)
@@ -677,6 +682,11 @@ def update_recipe(
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Nombre es requerido")
+    if not payload.ingredients:
+        raise HTTPException(
+            status_code=400,
+            detail="Debe agregar al menos un ingrediente con cantidad para la receta.",
+        )
 
     existing = (
         db_session.query(models.MenuItem)

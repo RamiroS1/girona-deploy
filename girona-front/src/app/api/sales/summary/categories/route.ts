@@ -44,8 +44,15 @@ export async function GET(request: Request) {
   const backendBaseUrl = getBackendBaseUrl();
   const requestUrl = new URL(request.url);
   const period = requestUrl.searchParams.get("period");
+  const dateFrom = requestUrl.searchParams.get("date_from");
+  const dateTo = requestUrl.searchParams.get("date_to");
   const baseUrl = toAbsoluteUrl(backendBaseUrl, "/sales/summary/categories");
-  const url = period ? `${baseUrl}?period=${encodeURIComponent(period)}` : baseUrl;
+  const sp = new URLSearchParams();
+  if (period) sp.set("period", period);
+  if (dateFrom) sp.set("date_from", dateFrom);
+  if (dateTo) sp.set("date_to", dateTo);
+  const q = sp.toString();
+  const url = q ? `${baseUrl}?${q}` : baseUrl;
 
   let response: Response;
   try {

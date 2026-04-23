@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
 from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,38 @@ def _format_category(value: str) -> str:
 
 def _format_name(value: str) -> str:
     return value.strip()
+
+
+def _validate_recipe_ingredients_for_caja(ingredients) -> None:
+    """Exige al menos un ingrediente con cantidad (peso) > 0 para costeo y mermas de stock."""
+    if ingredients is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Debes indicar al menos un ingrediente con su cantidad (receta obligatoria).",
+        )
+    if isinstance(ingredients, list) and len(ingredients) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Debes indicar al menos un ingrediente con su cantidad (receta obligatoria).",
+        )
+    if isinstance(ingredients, list) and ingredients and isinstance(ingredients[0], str):
+        raise HTTPException(
+            status_code=400,
+            detail="Indica ingrediente, unidad y cantidad (peso) para cada fila de la receta.",
+        )
+    for item in ingredients:
+        w = getattr(item, "weight", None)
+        if w is not None and _as_menu_decimal(w) <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Cada ingrediente debe tener una cantidad (peso) mayor a cero.",
+            )
+
+
+def _as_menu_decimal(value) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _normalize_ingredients(ingredients):
@@ -96,6 +129,8 @@ def create_item(payload: schemas.MenuItemCreate, db_session: Session = Depends(d
     if existing:
         raise HTTPException(status_code=409, detail="El item del menú ya existe")
 
+    _validate_recipe_ingredients_for_caja(payload.ingredients)
+
     item = models.MenuItem(
         name=name,
         category=category,
@@ -137,6 +172,7 @@ def update_item(
         data["category"] = candidate_category
 
     if "ingredients" in data:
+        _validate_recipe_ingredients_for_caja(data["ingredients"])
         data["ingredients"] = _normalize_ingredients(data["ingredients"])
 
     for key, value in data.items():

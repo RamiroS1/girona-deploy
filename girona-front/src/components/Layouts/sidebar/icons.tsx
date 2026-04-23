@@ -1,5 +1,6 @@
 import { SVGProps } from "react";
 import { CiShop as CiShopIcon } from "react-icons/ci";
+import { HiOutlineCash } from "react-icons/hi";
 import {
   MdOutlineInventory as MdOutlineInventoryIcon,
   MdOutlinePeople as MdOutlinePeopleIcon,
@@ -166,6 +167,8 @@ export const MdOutlineInventory = (props: PropsType) => (
   <MdOutlineInventoryIcon {...props} />
 );
 export const MdOutlinePeople = (props: PropsType) => <MdOutlinePeopleIcon {...props} />;
+
+export const CashRegisterIcon = (props: PropsType) => <HiOutlineCash {...props} />;
 
 export function Authentication(props: PropsType) {
   return (

@@ -212,6 +212,7 @@ class RecipeOut(BaseModel):
 class RecipeIngredientCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     unit: str | None = Field(default=None, max_length=5)
+    quantity: Decimal = Field(gt=0, description="Cantidad por lote (rendimiento)")
 
 
 class ReservationCreate(BaseModel):
@@ -378,6 +379,11 @@ class PosOrderClose(BaseModel):
     apply_inc: bool = False
     service_total: Decimal | None = Field(default=None, ge=0)
     utility_total: Decimal | None = Field(default=None, ge=0)
+    payment_method: str | None = Field(
+        default=None,
+        max_length=32,
+        description="efectivo|tarjeta_credito|tarjeta_debito|transferencia|billetera|otro|tarjeta(legacy)",
+    )
 
 
 class SaleItemOut(BaseModel):
@@ -401,6 +407,7 @@ class SaleOut(BaseModel):
     order_id: int
     customer_id: int | None
     waiter_id: int | None
+    payment_method: str | None = None
     subtotal: Decimal
     tax_total: Decimal
     discount_total: Decimal
@@ -514,7 +521,7 @@ class SalesAdjustmentsByMonthOut(BaseModel):
 class MenuItemIngredient(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     unit: str | None = Field(default=None, max_length=20)
-    weight: Decimal
+    weight: Decimal = Field(gt=0, description="Cantidad consumida (ej. gramos) por porción")
     price: Decimal
     total: Decimal | None = None
 

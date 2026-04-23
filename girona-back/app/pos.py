@@ -276,17 +276,48 @@ def _recompute_order_for_close(order: models.PosOrder, apply_inc: bool) -> None:
     order.total = total
 
 
+_ALLOWED_PAYMENT_METHODS = frozenset(
+    {
+        "efectivo",
+        "tarjeta",
+        "tarjeta_credito",
+        "tarjeta_debito",
+        "transferencia",
+        "billetera",
+        "otro",
+    },
+)
+
+
+def _normalize_payment_method(value: str | None) -> str | None:
+    if value is None or not str(value).strip():
+        return None
+    v = str(value).strip().lower()
+    if v not in _ALLOWED_PAYMENT_METHODS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Medio de pago invalido. Usa: efectivo, tarjeta_credito, tarjeta_debito, "
+                "transferencia, billetera, otro (o tarjeta en registros anteriores)"
+            ),
+        )
+    return v
+
+
 def _create_sale_from_order(
     db_session: Session,
     order: models.PosOrder,
     customer_id: int | None = None,
     waiter_id: int | None = None,
+    payment_method: str | None = None,
 ) -> models.Sale:
     if order.sale:
         if customer_id is not None:
             order.sale.customer_id = customer_id
         if waiter_id is not None:
             order.sale.waiter_id = waiter_id
+        if payment_method is not None:
+            order.sale.payment_method = payment_method
         return order.sale
 
     sale_subtotal = Decimal("0")
@@ -329,6 +360,7 @@ def _create_sale_from_order(
         + sale_tax_total
         + Decimal(order.service_total)
         + Decimal(order.utility_total),
+        payment_method=payment_method,
     )
     db_session.add(sale)
     db_session.flush()
@@ -722,11 +754,16 @@ def mark_order_closed(
     order.closed_at = now
     order.status = "closed"
 
+    payment_method: str | None = None
+    if payload is not None and payload.payment_method is not None:
+        payment_method = _normalize_payment_method(payload.payment_method)
+
     _create_sale_from_order(
         db_session,
         order,
         customer_id=customer_id,
         waiter_id=order.waiter_id,
+        payment_method=payment_method,
     )
     db_session.add(order)
     db_session.commit()

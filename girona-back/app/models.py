@@ -273,6 +273,8 @@ class Sale(Base):
     utility_total = Column(Numeric(14, 2), nullable=False, default=0)
     total = Column(Numeric(14, 2), nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # efectivo, tarjeta_credito, tarjeta_debito, transferencia, billetera, otro, tarjeta (legacy)
+    payment_method = Column(String(32), nullable=True)
 
     order = relationship("PosOrder", back_populates="sale")
     customer = relationship("Customer", back_populates="sales")

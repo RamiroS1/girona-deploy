@@ -1,5 +1,8 @@
 "use client";
 
+import PurchasesMetricsPanel, {
+  type PurchaseRecord,
+} from "@/components/Dashboard/purchases-metrics-panel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
@@ -24,11 +27,6 @@ type PosOrder = {
   status: string;
   total: number | string;
   closed_at?: string | null;
-};
-
-type Purchase = {
-  total_cost: number | string;
-  created_at: string;
 };
 
 type SalesByProduct = {
@@ -111,7 +109,7 @@ async function safeJson(response: Response) {
 export default function ControlPanel() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [orders, setOrders] = useState<PosOrder[]>([]);
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [purchases, setPurchases] = useState<PurchaseRecord[]>([]);
   const [topProducts, setTopProducts] = useState<SalesByProduct[]>([]);
   const [topWaiters, setTopWaiters] = useState<SalesByWaiter[]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,7 +142,9 @@ export default function ControlPanel() {
 
         setSales(Array.isArray(salesPayload) ? (salesPayload as Sale[]) : []);
         setOrders(Array.isArray(ordersPayload) ? (ordersPayload as PosOrder[]) : []);
-        setPurchases(Array.isArray(purchasesPayload) ? (purchasesPayload as Purchase[]) : []);
+        setPurchases(
+          Array.isArray(purchasesPayload) ? (purchasesPayload as PurchaseRecord[]) : [],
+        );
         setTopProducts(
           Array.isArray(productsPayload) ? (productsPayload as SalesByProduct[]) : [],
         );
@@ -298,6 +298,11 @@ export default function ControlPanel() {
           helper="Ultimos 30 dias"
         />
       </div>
+
+      <PurchasesMetricsPanel
+        purchases={purchases}
+        loading={loading}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-sm border border-stroke bg-white p-6 shadow-default dark:border-dark-3 dark:bg-gray-dark">

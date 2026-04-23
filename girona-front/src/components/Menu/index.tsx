@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { IconType } from "react-icons";
 import { BiSolidDrink, BiSolidDish } from "react-icons/bi";
 import { FaBitbucket, FaWineBottle } from "react-icons/fa";
 import {
@@ -8,9 +9,10 @@ import {
   FaChild,
   FaGlassWater,
   FaHotdog,
+  FaIceCream,
   FaStroopwafel,
 } from "react-icons/fa6";
-import { GiCutLemon, GiJug, GiSodaCan } from "react-icons/gi";
+import { GiCutLemon, GiJug, GiMeat, GiSodaCan } from "react-icons/gi";
 import { LiaWineGlassAltSolid } from "react-icons/lia";
 import { LuCupSoda, LuEggFried } from "react-icons/lu";
 import { MdOutlineFoodBank } from "react-icons/md";
@@ -18,6 +20,7 @@ import {
   PiBeerBottleBold,
   PiBowlFoodFill,
   PiHamburgerBold,
+  PiLeaf,
 } from "react-icons/pi";
 import {
   RiDeleteBinLine,
@@ -232,9 +235,12 @@ const RESTAURANTE_NAV = [
   { label: "Desayunos", Icon: LuEggFried },
   { label: "Dogs", Icon: FaHotdog },
   { label: "Entradas", Icon: RiRestaurantLine },
+  { label: "Ensaladas", Icon: PiLeaf },
   { label: "Menu infantil", Icon: FaChild },
   { label: "para Tardear", Icon: FaStroopwafel },
+  { label: "Platos fuertes", Icon: GiMeat },
   { label: "Platos especiales", Icon: BiSolidDish },
+  { label: "Postres", Icon: FaIceCream },
 ] as const;
 
 const BAR_NAV = [
@@ -249,6 +255,13 @@ const BAR_NAV = [
   { label: "Sodas", Icon: GiSodaCan },
   { label: "Vinos", Icon: FaWineBottle },
 ] as const;
+
+function getCategoryNavIcon(label: string, tab: "restaurante" | "bar"): IconType {
+  const nav = tab === "bar" ? BAR_NAV : RESTAURANTE_NAV;
+  const k = categoryKey(label);
+  const found = nav.find((n) => categoryKey(n.label) === k);
+  return found ? found.Icon : tab === "bar" ? FaGlassWater : PiBowlFoodFill;
+}
 
 export default function Menu({ items }: { items: MenuItem[] }) {
   const [tab, setTab] = useState<"restaurante" | "bar">("restaurante");
@@ -648,7 +661,11 @@ export default function Menu({ items }: { items: MenuItem[] }) {
       .filter((row) => row.name || row.weight || row.price);
 
     if (cleaned.length === 0) {
-      return { ok: true as const, ingredients: null };
+      return {
+        ok: false as const,
+        error:
+          "Debes agregar al menos un ingrediente con su cantidad (peso) para vincular costo e inventario.",
+      };
     }
 
     const invalidRow = cleaned.find(
@@ -657,7 +674,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
     if (invalidRow) {
       return {
         ok: false as const,
-        error: "Completa ingrediente, peso y precio para cada fila.",
+        error: "Completa ingrediente, cantidad (peso) y precio en cada fila (cantidades mayores a cero).",
       };
     }
 
@@ -999,30 +1016,32 @@ export default function Menu({ items }: { items: MenuItem[] }) {
   return (
     <div className="rounded-2xl border border-stroke bg-white p-6 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card">
       <div className="mb-6">
-        <div className="inline-flex w-full rounded-xl bg-gray-2 p-1 dark:bg-dark-2">
+        <div className="inline-flex w-full gap-1 rounded-xl bg-gray-2 p-1 dark:bg-dark-2">
           <button
             type="button"
             onClick={() => setTab("restaurante")}
             className={
-              "flex-1 rounded-lg px-4 py-2 text-center text-sm font-medium transition " +
+              "flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-center text-sm font-semibold transition " +
               (tab === "restaurante"
-                ? "bg-white text-dark shadow-sm ring-1 ring-black/5 dark:bg-gray-dark dark:text-white dark:ring-white/10"
+                ? "bg-primary text-white shadow-sm"
                 : "text-body hover:text-dark dark:text-dark-6 dark:hover:text-white")
             }
           >
-            Restaurante ({restauranteItems.length})
+            <RiRestaurantLine className="h-5 w-5 shrink-0" aria-hidden="true" />
+            <span>Restaurante ({restauranteItems.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setTab("bar")}
             className={
-              "flex-1 rounded-lg px-4 py-2 text-center text-sm font-medium transition " +
+              "flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-center text-sm font-semibold transition " +
               (tab === "bar"
-                ? "bg-white text-dark shadow-sm ring-1 ring-black/5 dark:bg-gray-dark dark:text-white dark:ring-white/10"
+                ? "bg-secondary text-white shadow-sm"
                 : "text-body hover:text-dark dark:text-dark-6 dark:hover:text-white")
             }
           >
-            Bar ({barItems.length})
+            <RiDrinks2Fill className="h-5 w-5 shrink-0" aria-hidden="true" />
+            <span>Bar ({barItems.length})</span>
           </button>
         </div>
       </div>
@@ -1171,8 +1190,11 @@ export default function Menu({ items }: { items: MenuItem[] }) {
 
             <div className="mt-4">
               <div className="mb-2 text-sm font-semibold text-dark dark:text-white">
-                Receta (opcional)
+                Receta (obligatoria)
               </div>
+              <p className="mb-2 text-xs text-body-color dark:text-dark-6">
+                Indica la cantidad (peso) de cada insumo para relacionar el costo con caja, compras e inventario.
+              </p>
               <div className="overflow-auto rounded-xl border border-stroke dark:border-dark-3">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-1 text-left text-xs font-semibold uppercase tracking-wide text-dark dark:bg-white/5 dark:text-white">
@@ -1479,6 +1501,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
               .map((label) => {
               const id = categoryToId(label);
               const available = activeCategorySet.has(categoryKey(label));
+              const CustomIcon = getCategoryNavIcon(label, "restaurante");
               return (
                 <button
                   key={label}
@@ -1497,7 +1520,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
                       : "cursor-not-allowed opacity-50")
                   }
                 >
-                  <PiBowlFoodFill className="h-5 w-5" aria-hidden="true" />
+                  <CustomIcon className="h-5 w-5" aria-hidden="true" />
                   <span>{label}</span>
                 </button>
               );
@@ -1541,6 +1564,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
               .map((label) => {
               const id = categoryToId(label);
               const available = activeCategorySet.has(categoryKey(label));
+              const CustomIcon = getCategoryNavIcon(label, "bar");
               return (
                 <button
                   key={label}
@@ -1559,7 +1583,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
                       : "cursor-not-allowed opacity-50")
                   }
                 >
-                  <FaGlassWater className="h-5 w-5" aria-hidden="true" />
+                  <CustomIcon className="h-5 w-5" aria-hidden="true" />
                   <span>{label}</span>
                 </button>
               );

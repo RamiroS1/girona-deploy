@@ -14,17 +14,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    # Publicado en el host para que el backend conecte vía host.docker.internal (evita fallos
+    # de enrutado/firewall entre contenedores en algunos equipos con UFW, etc.)
+    ports:
+      - "15432:5432"
 
   backend:
     build:
       context: ./girona-back
     container_name: girona-backend
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-girona_user}:${POSTGRES_PASSWORD:-girona_pass_change_me}@db:5432/${POSTGRES_DB:-girona_prod}
+      GIRONA_DB_WAIT_HOST: host.docker.internal
+      GIRONA_DB_WAIT_PORT: "15432"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-girona_user}:${POSTGRES_PASSWORD:-girona_pass_change_me}@host.docker.internal:15432/${POSTGRES_DB:-girona_prod}
       AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-1}
       AUTO_MIGRATE_SCHEMA: ${AUTO_MIGRATE_SCHEMA:-1}
       FACTUS_ENABLED: ${FACTUS_ENABLED:-1}
@@ -61,12 +69,17 @@ services:
       context: ./girona-front
     container_name: girona-frontend
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       backend:
         condition: service_started
+    # El servidor de Next (rutas /api/*) debe alcanzar el API. En algunos hosts `backend:8000`
+    # no enruta entre contenedores; el puerto 8000 publicado en el host es fiable.
     environment:
-      BACKEND_URL: http://backend:8000
-      NEXT_PUBLIC_API_BASE_URL: http://backend:8000
+      BACKEND_URL: http://host.docker.internal:8000
+      # Navegador (si algún fetch client-side usa la URL pública)
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NODE_ENV: production
     ports:
       - "3000:3000"

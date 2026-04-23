@@ -1,14 +1,46 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from . import db, models, schemas
 
 router = APIRouter(prefix="/sales", tags=["sales"])
+
+CO_TZ = ZoneInfo("America/Bogota")
+
+
+def _day_bounds_utc(yyyy_mm_dd: str) -> tuple[datetime, datetime]:
+    """Rango [inicio, fin) del día en America/Bogota, en UTC, para filtrar `created_at`."""
+    try:
+        d = date.fromisoformat(yyyy_mm_dd.strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="Fecha invalida, use formato YYYY-MM-DD"
+        ) from exc
+    start_local = datetime.combine(d, time.min, tzinfo=CO_TZ)
+    end_local = start_local + timedelta(days=1)
+    return (start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc))
+
+
+def _range_bounds_utc(d_from: str, d_to: str) -> tuple[datetime, datetime]:
+    """Rango [inicio, fin) en UTC para filtrar ventas por dias calendario en America/Bogota."""
+    try:
+        d0 = date.fromisoformat(d_from.strip())
+        d1 = date.fromisoformat(d_to.strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail="Fecha invalida, use formato YYYY-MM-DD"
+        ) from exc
+    if d0 > d1:
+        d0, d1 = d1, d0
+    start_local = datetime.combine(d0, time.min, tzinfo=CO_TZ)
+    end_exclusive = datetime.combine(d1 + timedelta(days=1), time.min, tzinfo=CO_TZ)
+    return (start_local.astimezone(timezone.utc), end_exclusive.astimezone(timezone.utc))
 
 
 def _period_start(period: str | None) -> datetime | None:
@@ -32,12 +64,34 @@ def _period_start(period: str | None) -> datetime | None:
 
 
 @router.get("", response_model=list[schemas.SaleOut])
-def list_sales(period: str | None = None, db_session: Session = Depends(db.get_db)):
+def list_sales(
+    period: str | None = None,
+    on_date: str | None = None,
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    db_session: Session = Depends(db.get_db),
+):
     query = db_session.query(models.Sale)
-    start_date = _period_start(period)
-    if start_date is not None:
-        query = query.filter(models.Sale.created_at >= start_date)
-    return query.order_by(models.Sale.id.desc()).limit(200).all()
+    use_wide_limit = False
+    if date_from and str(date_from).strip() and date_to and str(date_to).strip():
+        use_wide_limit = True
+        start_utc, end_utc = _range_bounds_utc(str(date_from), str(date_to))
+        query = query.filter(
+            models.Sale.created_at >= start_utc,
+            models.Sale.created_at < end_utc,
+        )
+    elif on_date and str(on_date).strip():
+        start_utc, end_utc = _day_bounds_utc(str(on_date))
+        query = query.filter(
+            models.Sale.created_at >= start_utc,
+            models.Sale.created_at < end_utc,
+        )
+    else:
+        start_date = _period_start(period)
+        if start_date is not None:
+            query = query.filter(models.Sale.created_at >= start_date)
+    limit = 5000 if use_wide_limit else 500
+    return query.order_by(models.Sale.id.desc()).limit(limit).all()
 
 
 @router.get("/{sale_id}", response_model=schemas.SaleOut)
@@ -79,8 +133,12 @@ def sales_by_product(period: str | None = None, db_session: Session = Depends(db
 
 
 @router.get("/summary/categories", response_model=list[schemas.SalesByCategoryOut])
-def sales_by_category(period: str | None = None, db_session: Session = Depends(db.get_db)):
-    start_date = _period_start(period)
+def sales_by_category(
+    period: str | None = None,
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    db_session: Session = Depends(db.get_db),
+):
     query = (
         db_session.query(
             models.SaleItem.category,
@@ -91,8 +149,16 @@ def sales_by_category(period: str | None = None, db_session: Session = Depends(d
         .group_by(models.SaleItem.category)
         .order_by(func.sum(models.SaleItem.line_total).desc())
     )
-    if start_date is not None:
-        query = query.filter(models.Sale.created_at >= start_date)
+    if date_from and str(date_from).strip() and date_to and str(date_to).strip():
+        start_utc, end_utc = _range_bounds_utc(str(date_from), str(date_to))
+        query = query.filter(
+            models.Sale.created_at >= start_utc,
+            models.Sale.created_at < end_utc,
+        )
+    else:
+        start_date = _period_start(period)
+        if start_date is not None:
+            query = query.filter(models.Sale.created_at >= start_date)
     rows = query.all()
     return [
         schemas.SalesByCategoryOut(category=row.category, quantity=row.quantity, total=row.total)

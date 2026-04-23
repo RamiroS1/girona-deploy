@@ -47,9 +47,12 @@ export default function DashboardCharts() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rangeMode, setRangeMode] = useState<"month" | "custom">("month");
+  const [rangeMode, setRangeMode] = useState<"month" | "day" | "custom">("month");
   const [selectedMonth, setSelectedMonth] = useState(() =>
     dayjs().tz(COLOMBIA_TZ).format("YYYY-MM"),
+  );
+  const [selectedDay, setSelectedDay] = useState(() =>
+    dayjs().tz(COLOMBIA_TZ).format("YYYY-MM-DD"),
   );
   const [customStart, setCustomStart] = useState(() =>
     dayjs().tz(COLOMBIA_TZ).subtract(1, "month").format("YYYY-MM-DD"),
@@ -114,6 +117,16 @@ export default function DashboardCharts() {
       };
     }
 
+    if (rangeMode === "day") {
+      const dayCandidate = dayjs.tz(selectedDay, COLOMBIA_TZ).startOf("day");
+      const start = dayCandidate.isValid() ? dayCandidate : defaultEnd;
+      return {
+        rangeStart: start,
+        rangeEnd: start,
+        rangeLabel: `Dia ${start.format("DD/MM/YYYY")}`,
+      };
+    }
+
     const monthStart = dayjs.tz(`${selectedMonth}-01`, COLOMBIA_TZ).startOf("month");
     const start = monthStart.isValid() ? monthStart : defaultEnd.startOf("month");
     const end = start.endOf("month").startOf("day");
@@ -124,7 +137,7 @@ export default function DashboardCharts() {
     }).format(start.toDate());
 
     return { rangeStart: start, rangeEnd: end, rangeLabel: label };
-  }, [rangeMode, selectedMonth, customStart, customEnd, defaultEnd]);
+  }, [rangeMode, selectedMonth, selectedDay, customStart, customEnd, defaultEnd]);
 
   const dailySeries = useMemo(() => {
     const totalDays = rangeEnd.diff(rangeStart, "day");
@@ -232,11 +245,12 @@ export default function DashboardCharts() {
             <select
               value={rangeMode}
               onChange={(event) =>
-                setRangeMode(event.target.value as typeof rangeMode)
+                setRangeMode(event.target.value as "month" | "day" | "custom")
               }
               className="h-9 rounded-md border border-stroke bg-white px-3 text-sm text-dark shadow-sm outline-none transition focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
             >
               <option value="month">Mes especifico</option>
+              <option value="day">Dia especifico</option>
               <option value="custom">Rango personalizado</option>
             </select>
             {rangeMode === "custom" ? (
@@ -255,6 +269,14 @@ export default function DashboardCharts() {
                   className="h-9 rounded-md border border-stroke bg-white px-2 text-sm text-dark shadow-sm outline-none transition focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
                 />
               </div>
+            ) : rangeMode === "day" ? (
+              <input
+                type="date"
+                value={selectedDay}
+                onChange={(event) => setSelectedDay(event.target.value)}
+                className="h-9 rounded-md border border-stroke bg-white px-2 text-sm text-dark shadow-sm outline-none transition focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                title="Elegi un dia concreto"
+              />
             ) : (
               <input
                 type="month"

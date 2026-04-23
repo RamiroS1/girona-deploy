@@ -1,6 +1,15 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import type { KeyboardEvent } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { SearchIcon } from "@/assets/icons";
 
@@ -48,6 +57,13 @@ type PurchaseItemRow = {
   supplier_id: string;
   quantity: string;
   total_cost: string;
+};
+
+type RecipeIngredientRow = {
+  name: string;
+  unit: string;
+  quantity: string;
+  productId: number | null;
 };
 const UNIT_OPTIONS = [
   { value: "mililitros", label: "ML" },
@@ -160,11 +176,188 @@ function formatUnitAbbr(value: string | null | undefined) {
   return raw ? raw.toUpperCase() : "";
 }
 
+function productUnitToRecipeAbbrev(product: InventoryProduct): string {
+  const u = (product.unit ?? "").toString().toLowerCase();
+  if (u === "gramos") return "GR";
+  if (u === "mililitros") return "ML";
+  if (u === "unidades") return "UND";
+  return "";
+}
+
+async function fetchIngredientProductList(): Promise<InventoryProduct[]> {
+  const response = await fetch(
+    `/api/inventory/products?kind=${encodeURIComponent("ingredient")}`,
+    { cache: "no-store" },
+  );
+  const payload = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok || !Array.isArray(payload)) {
+    return [];
+  }
+  return payload as InventoryProduct[];
+}
+
+function IngredientSearchField({
+  name,
+  productId,
+  options,
+  loading,
+  onSelectProduct,
+  onNameChange,
+}: {
+  name: string;
+  productId: number | null;
+  options: InventoryProduct[];
+  loading?: boolean;
+  onSelectProduct: (p: InventoryProduct) => void;
+  onNameChange: (name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+
+  const filtered = useMemo(() => {
+    const t = normalizeSearchText(name);
+    if (!t) return options;
+    return options.filter((p) => normalizeSearchText(p.name).includes(t));
+  }, [options, name]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setHighlight(0);
+    }
+  }, [open, name, filtered.length]);
+
+  const onKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>) => {
+      if (!open && (e.key === "ArrowDown" || e.key === "Enter") && options.length) {
+        setOpen(true);
+        return;
+      }
+      if (!open) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlight((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0)));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlight((h) => Math.max(h - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" && filtered[highlight]) {
+        e.preventDefault();
+        onSelectProduct(filtered[highlight]);
+        setOpen(false);
+      }
+    },
+    [open, options.length, filtered, highlight, onSelectProduct],
+  );
+
+  const selectedLabel =
+    productId != null
+      ? options.find((p) => p.id === productId)?.name
+      : null;
+
+  return (
+    <div ref={containerRef} className="relative min-w-0">
+      <div className="flex items-center gap-1">
+        <input
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          value={name}
+          onChange={(e) => {
+            onNameChange(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          autoComplete="off"
+          disabled={!!loading}
+          placeholder="Buscar ingrediente..."
+          className={
+            "w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white " +
+            (productId != null
+              ? "ring-1 ring-primary/40 dark:ring-primary/50"
+              : "")
+          }
+        />
+        {productId != null && selectedLabel ? (
+          <span
+            className="shrink-0 select-none rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary"
+            title="Vinculado al inventario de ingredientes"
+          >
+            ok
+          </span>
+        ) : null}
+      </div>
+      {open && !loading && (
+        <ul
+          id={listId}
+          role="listbox"
+          className="absolute z-30 mt-1 max-h-48 w-full min-w-[12rem] overflow-auto rounded-md border border-stroke bg-white py-1 text-sm shadow-md dark:border-dark-3 dark:bg-gray-dark"
+        >
+          {filtered.length === 0 ? (
+            <li className="px-3 py-2 text-body-color dark:text-dark-6">
+              Sin coincidencias. Podés seguir escribiendo un nombre manualmente.
+            </li>
+          ) : (
+            filtered.map((p, idx) => (
+              <li
+                key={p.id}
+                role="option"
+                aria-selected={productId === p.id}
+                className={
+                  "cursor-pointer px-3 py-2 " +
+                  (idx === highlight
+                    ? "bg-primary/10 text-dark dark:text-white"
+                    : "hover:bg-gray-1 dark:hover:bg-dark-2") +
+                  (productId === p.id ? " font-semibold" : "")
+                }
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onSelectProduct(p);
+                  setOpen(false);
+                }}
+              >
+                {p.name}
+                {p.unit ? (
+                  <span className="ml-1 text-xs text-body-color">({formatUnitAbbr(p.unit)})</span>
+                ) : null}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }) {
   const [tab, setTab] = useState<InventoryKind>("ingredient");
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [recipes, setRecipes] = useState<RecipeItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [ingredientCache, setIngredientCache] = useState<InventoryProduct[]>([]);
+  const [ingredientCacheLoading, setIngredientCacheLoading] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
   const [showCreate, setShowCreate] = useState(false);
@@ -175,9 +368,9 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
   const [recipeNameInput, setRecipeNameInput] = useState("");
   const [recipeYieldInput, setRecipeYieldInput] = useState("1");
   const [recipeUnitInput, setRecipeUnitInput] = useState("");
-  const [recipeIngredients, setRecipeIngredients] = useState<
-    Array<{ name: string; unit: string; quantity: string }>
-  >([{ name: "", unit: "", quantity: "" }]);
+  const [recipeIngredients, setRecipeIngredients] = useState<RecipeIngredientRow[]>([
+    { name: "", unit: "", quantity: "", productId: null },
+  ]);
   const [editingRecipeId, setEditingRecipeId] = useState<number | null>(null);
   const [unitInput, setUnitInput] = useState("");
   const [quantityInput, setQuantityInput] = useState("");
@@ -220,7 +413,11 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
             "No se pudo cargar inventario",
         );
       }
-      setProducts(Array.isArray(payload) ? (payload as InventoryProduct[]) : []);
+      const list = Array.isArray(payload) ? (payload as InventoryProduct[]) : [];
+      setProducts(list);
+      if (kind === "ingredient") {
+        setIngredientCache(list);
+      }
     } catch {
       setProducts([]);
     } finally {
@@ -244,6 +441,16 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
       setRecipes([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshIngredientCache() {
+    setIngredientCacheLoading(true);
+    try {
+      const list = await fetchIngredientProductList();
+      setIngredientCache(list);
+    } finally {
+      setIngredientCacheLoading(false);
     }
   }
 
@@ -328,7 +535,7 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
     setRecipeNameInput("");
     setRecipeYieldInput("1");
     setRecipeUnitInput("");
-    setRecipeIngredients([{ name: "", unit: "", quantity: "" }]);
+    setRecipeIngredients([{ name: "", unit: "", quantity: "", productId: null }]);
     setEditingRecipeId(null);
   }
 
@@ -365,6 +572,7 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
     setEditingRecipeId(null);
     resetForm();
     setShowRecipeCreate(true);
+    void refreshIngredientCache();
   }
 
   function openEdit(product: InventoryProduct) {
@@ -385,7 +593,10 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
   }
 
   function addRecipeIngredientRow() {
-    setRecipeIngredients((prev) => [...prev, { name: "", unit: "", quantity: "" }]);
+    setRecipeIngredients((prev) => [
+      ...prev,
+      { name: "", unit: "", quantity: "", productId: null },
+    ]);
   }
 
   function updateRecipeIngredient(
@@ -394,7 +605,28 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
     value: string,
   ) {
     setRecipeIngredients((prev) =>
-      prev.map((item, idx) => (idx === index ? { ...item, [field]: value } : item)),
+      prev.map((item, idx) => {
+        if (idx !== index) return item;
+        if (field === "name") {
+          return { ...item, name: value, productId: null };
+        }
+        return { ...item, [field]: value };
+      }),
+    );
+  }
+
+  function selectRecipeIngredientProduct(index: number, product: InventoryProduct) {
+    setRecipeIngredients((prev) =>
+      prev.map((item, idx) => {
+        if (idx !== index) return item;
+        const u = productUnitToRecipeAbbrev(product) || defaultRecipeUnitForName(product.name);
+        return {
+          name: product.name,
+          productId: product.id,
+          unit: u || item.unit,
+          quantity: item.quantity,
+        };
+      }),
     );
   }
 
@@ -453,11 +685,29 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
           name: item.name ?? "",
           unit: formatUnitAbbr(item.unit) || defaultRecipeUnitForName(item.name ?? ""),
           quantity: normalizeIntegerInput(item.quantity ?? ""),
+          productId: null,
         })),
       );
     } else {
-      setRecipeIngredients([{ name: "", unit: "", quantity: "" }]);
+      setRecipeIngredients([{ name: "", unit: "", quantity: "", productId: null }]);
     }
+    void (async () => {
+      setIngredientCacheLoading(true);
+      try {
+        const list = await fetchIngredientProductList();
+        setIngredientCache(list);
+        setRecipeIngredients((rows) =>
+          rows.map((row) => {
+            const found = list.find(
+              (p) => p.name.trim().toLowerCase() === row.name.trim().toLowerCase(),
+            );
+            return found ? { ...row, productId: found.id } : row;
+          }),
+        );
+      } finally {
+        setIngredientCacheLoading(false);
+      }
+    })();
   }
 
   function cancelRecipeEdit() {
@@ -637,6 +887,14 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
         };
       })
       .filter((item) => item.name || item.quantity);
+
+    if (cleanedIngredients.length === 0) {
+      setSubmitStatus({
+        kind: "error",
+        message: "Agrega al menos un ingrediente con cantidad (relación con costo e inventario).",
+      });
+      return;
+    }
 
     for (const item of cleanedIngredients) {
       if (!item.name || !item.quantity) {
@@ -839,7 +1097,11 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
             }}
             className="rounded-md bg-dark px-4 py-2 text-sm font-medium text-white hover:bg-dark/90 dark:bg-white dark:text-dark dark:hover:bg-white/90"
           >
-            {tab === "recipe" ? "Agregar receta" : "Agregar compra"}
+            {tab === "recipe"
+              ? "Agregar receta"
+              : tab === "ingredient"
+                ? "Agregar Ingrediente"
+                : "Agregar compra"}
           </button>
         </div>
       </div>
@@ -1121,17 +1383,29 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
             <div className="mb-2 text-sm font-semibold text-dark dark:text-white">
               Ingredientes
             </div>
+            {ingredientCacheLoading ? (
+              <p className="mb-2 text-xs text-body-color dark:text-dark-6">
+                Cargando ingredientes del inventario…
+              </p>
+            ) : (
+              <p className="mb-2 text-xs text-body-color dark:text-dark-6">
+                Buscá y elegí de la misma lista que en la pestaña Ingredientes (queda en caché
+                mientras usás el formulario).
+              </p>
+            )}
             <div className="space-y-2">
               {recipeIngredients.map((item, index) => (
                 <div
                   key={`recipe-ingredient-${index}`}
                   className="grid grid-cols-1 gap-2 md:grid-cols-[2fr_1fr_1fr_auto]"
                 >
-                  <input
-                    value={item.name}
-                    onChange={(e) => updateRecipeIngredient(index, "name", e.target.value)}
-                    className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
-                    placeholder="Ingrediente"
+                  <IngredientSearchField
+                    name={item.name}
+                    productId={item.productId}
+                    options={ingredientCache}
+                    loading={ingredientCacheLoading}
+                    onNameChange={(v) => updateRecipeIngredient(index, "name", v)}
+                    onSelectProduct={(p) => selectRecipeIngredientProduct(index, p)}
                   />
                   <input
                     value={item.quantity}
@@ -1316,18 +1590,23 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
                       </div>
 
                       <div className="mt-3 space-y-2">
+                        {ingredientCacheLoading ? (
+                          <p className="text-xs text-body-color dark:text-dark-6">
+                            Cargando ingredientes del inventario…
+                          </p>
+                        ) : null}
                         {recipeIngredients.map((item, index) => (
                           <div
                             key={`recipe-ingredient-edit-${index}`}
                             className="grid grid-cols-1 gap-2 md:grid-cols-[2fr_1fr_1fr_auto]"
                           >
-                            <input
-                              value={item.name}
-                              onChange={(e) =>
-                                updateRecipeIngredient(index, "name", e.target.value)
-                              }
-                              className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
-                              placeholder="Ingrediente"
+                            <IngredientSearchField
+                              name={item.name}
+                              productId={item.productId}
+                              options={ingredientCache}
+                              loading={ingredientCacheLoading}
+                              onNameChange={(v) => updateRecipeIngredient(index, "name", v)}
+                              onSelectProduct={(p) => selectRecipeIngredientProduct(index, p)}
                             />
                             <input
                               value={item.quantity}

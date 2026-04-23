@@ -61,6 +61,10 @@ def _auto_migrate_schema() -> None:
                                 "ADD COLUMN utility_total NUMERIC(14, 2) NOT NULL DEFAULT 0"
                             )
                         )
+                    if "payment_method" not in sales_columns:
+                        conn.execute(
+                            text("ALTER TABLE sales ADD COLUMN payment_method VARCHAR(32)")
+                        )
                 reservations_exists = conn.execute(
                     text("SELECT name FROM sqlite_master WHERE type='table' AND name='reservations'")
                 ).first()
@@ -84,6 +88,9 @@ def _auto_migrate_schema() -> None:
                     "ALTER TABLE IF EXISTS menu_items "
                     "ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"
                 )
+            )
+            conn.execute(
+                text("ALTER TABLE IF EXISTS menu_items DROP COLUMN IF EXISTS image_url")
             )
             conn.execute(text("ALTER TABLE IF EXISTS suppliers DROP COLUMN IF EXISTS email"))
             conn.execute(text("ALTER TABLE IF EXISTS suppliers DROP COLUMN IF EXISTS notes"))
@@ -152,6 +159,12 @@ def _auto_migrate_schema() -> None:
                 text(
                     "ALTER TABLE IF EXISTS sales "
                     "ADD COLUMN IF NOT EXISTS utility_total NUMERIC(14, 2) NOT NULL DEFAULT 0"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS sales "
+                    "ADD COLUMN IF NOT EXISTS payment_method VARCHAR(32)"
                 )
             )
             conn.execute(

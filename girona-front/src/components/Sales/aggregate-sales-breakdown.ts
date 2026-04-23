@@ -1,0 +1,136 @@
+import dayjs, { type Dayjs } from "dayjs";
+import timezone from "dayjs/plugin/timezone";
+import utc from "dayjs/plugin/utc";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const COLOMBIA_TZ = "America/Bogota";
+
+const TARJETA_CODES = new Set(["tarjeta", "tarjeta_credito", "tarjeta_debito"]);
+
+export type TimeFilter = "all" | "week" | "month" | "quarter" | "year";
+
+export type SaleRowLike = {
+  total: unknown;
+  subtotal: unknown;
+  tax_total: unknown;
+  service_total: unknown;
+  courtesy_total: unknown;
+  discount_total: unknown;
+  payment_method?: string | null;
+};
+
+export type SalesBreakdownAgg = {
+  n: number;
+  totalFacturado: number;
+  totalSubtotal: number;
+  totalInc: number;
+  totalPropinas: number;
+  totalCortesias: number;
+  totalDescuentos: number;
+  byPayment: {
+    efectivo: number;
+    tarjetas: number;
+    transferencia: number;
+    billetera: number;
+    otro: number;
+    sinEspecificar: number;
+  };
+};
+
+function n(value: unknown) {
+  const x = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(x) ? x : 0;
+}
+
+export function aggregateSalesBreakdown(sales: SaleRowLike[]): SalesBreakdownAgg {
+  const byPayment: SalesBreakdownAgg["byPayment"] = {
+    efectivo: 0,
+    tarjetas: 0,
+    transferencia: 0,
+    billetera: 0,
+    otro: 0,
+    sinEspecificar: 0,
+  };
+  let totalFacturado = 0;
+  let totalSubtotal = 0;
+  let totalInc = 0;
+  let totalPropinas = 0;
+  let totalCortesias = 0;
+  let totalDescuentos = 0;
+  for (const s of sales) {
+    const t = n(s.total);
+    totalFacturado += t;
+    totalSubtotal += n(s.subtotal);
+    totalInc += n(s.tax_total);
+    totalPropinas += n(s.service_total);
+    totalCortesias += n(s.courtesy_total);
+    totalDescuentos += n(s.discount_total);
+    const code = (s.payment_method ?? "").toLowerCase().trim();
+    if (!code) {
+      byPayment.sinEspecificar += t;
+    } else if (TARJETA_CODES.has(code)) {
+      byPayment.tarjetas += t;
+    } else if (code === "transferencia") {
+      byPayment.transferencia += t;
+    } else if (code === "efectivo") {
+      byPayment.efectivo += t;
+    } else if (code === "billetera") {
+      byPayment.billetera += t;
+    } else {
+      byPayment.otro += t;
+    }
+  }
+  return {
+    n: sales.length,
+    totalFacturado,
+    totalSubtotal,
+    totalInc,
+    totalPropinas,
+    totalCortesias,
+    totalDescuentos,
+    byPayment,
+  };
+}
+
+const PERIOD_DAYS: Record<TimeFilter, number | null> = {
+  all: null,
+  week: 7,
+  month: 30,
+  quarter: 90,
+  year: 365,
+};
+
+export function filterPurchasesByTimeFilter<T extends { created_at: string }>(
+  purchases: T[],
+  period: TimeFilter,
+): T[] {
+  const days = PERIOD_DAYS[period];
+  if (days == null) return purchases;
+  const cutoff = dayjs().tz(COLOMBIA_TZ).subtract(days, "day");
+  return purchases.filter((p) => {
+    const t = dayjs(p.created_at).tz(COLOMBIA_TZ);
+    if (!t.isValid()) return false;
+    return t.valueOf() >= cutoff.valueOf();
+  });
+}
+
+export function filterPurchasesByYmdRange<T extends { created_at: string }>(
+  purchases: T[],
+  rangeStart: Dayjs,
+  rangeEnd: Dayjs,
+): T[] {
+  const r0 = rangeStart.tz(COLOMBIA_TZ).startOf("day");
+  const r1 = rangeEnd.tz(COLOMBIA_TZ).endOf("day");
+  return purchases.filter((p) => {
+    const t = dayjs(p.created_at).tz(COLOMBIA_TZ);
+    if (!t.isValid()) return false;
+    const x = t.valueOf();
+    return x >= r0.valueOf() && x <= r1.valueOf();
+  });
+}
+
+export function sumPurchaseTotalCost<T extends { total_cost: unknown }>(purchases: T[]): number {
+  return purchases.reduce((acc, p) => acc + n(p.total_cost), 0);
+}

@@ -18,6 +18,27 @@ dayjs.extend(timezone);
 
 const COLOMBIA_TZ = "America/Bogota";
 const INC_RATE = 0.08;
+const BUSINESS_NAME = process.env.NEXT_PUBLIC_BUSINESS_NAME ?? "Girona";
+const PAYMENT_METHOD_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "efectivo", label: "Efectivo" },
+  { value: "tarjeta_credito", label: "Tarjeta de Crédito" },
+  { value: "tarjeta_debito", label: "Tarjeta de Débito" },
+  { value: "transferencia", label: "Transferencia bancaria" },
+  { value: "billetera", label: "Billetera / Nequi / Daviplata" },
+  { value: "otro", label: "Otro" },
+];
+
+function paymentMethodLabel(value: string) {
+  return PAYMENT_METHOD_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 const POS_HIDDEN_FINISHED_ORDERS_KEY = "pos_hidden_finished_orders_v1";
 const TABLE_SECTION_VALUES = [
   "TERRAZA 1",
@@ -379,6 +400,100 @@ function buildOrderPdf(order: PosOrderOut, tableName: string) {
   return doc;
 }
 
+type PreFacturaPreview = {
+  subtotal: number;
+  incTotal: number;
+  serviceTotal: number;
+  total: number;
+};
+
+function buildPreFacturaPdf(
+  order: PosOrderOut,
+  preview: PreFacturaPreview,
+  tableName: string,
+  paymentMethodValue: string,
+) {
+  const doc = new jsPDF();
+  const m = 14;
+  const pageW = 196;
+  let y = 18;
+
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text(BUSINESS_NAME, m, y);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  const noteLines = doc.splitTextToSize(
+    "Pre-factura / comprobante de consumo. No reemplaza la factura electronica; si aplica, se emite via Factus al guardar pago con facturacion activada.",
+    pageW - m,
+  );
+  doc.text(noteLines, m, y);
+  y += noteLines.length * 4.5 + 2;
+
+  const when = dayjs().tz(COLOMBIA_TZ).format("DD/MM/YYYY HH:mm");
+  doc.setFontSize(10);
+  doc.text(
+    `Pedido #${order.id}  |  Mesa: ${tableName}  |  ${when}`,
+    m,
+    y,
+  );
+  y += 6;
+  doc.text(
+    `Medio de pago (preferencia): ${paymentMethodLabel(paymentMethodValue)}`,
+    m,
+    y,
+  );
+  y += 10;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Producto", m, y);
+  doc.text("Cant.", 130, y);
+  doc.text("Total", pageW, y, { align: "right" });
+  y += 2;
+  doc.setLineWidth(0.3);
+  doc.line(m, y, pageW, y);
+  y += 6;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+
+  for (const it of order.items) {
+    const nameLines = doc.splitTextToSize(String(it.name), 100);
+    const blockH = Math.max(nameLines.length * 4.8, 6);
+    if (y + blockH > 275) {
+      doc.addPage();
+      y = 20;
+    }
+    const rowTop = y;
+    nameLines.forEach((line: string, i: number) => {
+      doc.text(line, m, rowTop + 4 + i * 4.8);
+    });
+    doc.text(String(it.quantity), 130, rowTop + 4);
+    doc.text(formatMoney(it.line_total), pageW, rowTop + 4, { align: "right" });
+    y = rowTop + blockH + 2;
+  }
+
+  y += 4;
+  doc.setFontSize(10);
+  const addTotalRow = (label: string, value: number, bold?: boolean) => {
+    if (y > 285) {
+      doc.addPage();
+      y = 20;
+    }
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.text(label, m, y);
+    doc.text(formatMoney(value), pageW, y, { align: "right" });
+    y += 6;
+    doc.setFont("helvetica", "normal");
+  };
+  addTotalRow("Subtotal", preview.subtotal);
+  addTotalRow("INC", preview.incTotal);
+  addTotalRow("Servicio", preview.serviceTotal);
+  addTotalRow("Total", preview.total, true);
+  return doc;
+}
+
 // Modal para ver pedido existente
 function ViewOrderModal({
   order,
@@ -568,6 +683,7 @@ export default function PosScreen() {
   >({ kind: "idle" });
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("efectivo");
   const [paymentStep, setPaymentStep] = useState<"choice" | "new" | "existing">(
     "choice",
   );
@@ -583,7 +699,6 @@ export default function PosScreen() {
   const [issueElectronicInvoice, setIssueElectronicInvoice] = useState(false);
   const [applyConsumptionTax, setApplyConsumptionTax] = useState(false);
   const [serviceTipInput, setServiceTipInput] = useState("");
-  const [utilityInput, setUtilityInput] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
@@ -634,20 +749,17 @@ export default function PosScreen() {
     if (!paymentOrder) return null;
     const subtotal = Number(paymentOrder.subtotal) || 0;
     const defaultServiceTotal = Math.max(0, Number(paymentOrder.service_total) || 0);
-    const defaultUtilityTotal = Math.max(0, Number(paymentOrder.utility_total) || 0);
     const serviceTotal =
       serviceTipInput.trim() === "" ? defaultServiceTotal : parseCopAmount(serviceTipInput);
-    const utilityTotal =
-      utilityInput.trim() === "" ? defaultUtilityTotal : parseCopAmount(utilityInput);
     const incTotal = applyConsumptionTax ? subtotal * INC_RATE : 0;
+    const totalToCharge = subtotal + incTotal + serviceTotal;
     return {
       subtotal,
       incTotal,
       serviceTotal,
-      utilityTotal,
-      total: subtotal + incTotal + serviceTotal + utilityTotal,
+      total: totalToCharge,
     };
-  }, [paymentOrder, applyConsumptionTax, serviceTipInput, utilityInput]);
+  }, [paymentOrder, applyConsumptionTax, serviceTipInput]);
 
   const activeOrders = useMemo(
     () => orders.filter((o) => !["closed", "void"].includes(o.status)),
@@ -778,6 +890,7 @@ export default function PosScreen() {
       apply_inc?: boolean;
       service_total?: number;
       utility_total?: number;
+      payment_method?: string;
     },
   ): Promise<PosOrderOut | null> {
     try {
@@ -785,6 +898,7 @@ export default function PosScreen() {
       const closePayload = {
         ...(payload ?? {}),
         apply_inc: payload?.apply_inc ?? applyConsumptionTax,
+        payment_method: payload?.payment_method ?? paymentMethod,
         service_total:
           payload?.service_total ??
           (paymentOrder
@@ -794,11 +908,7 @@ export default function PosScreen() {
             : 0),
         utility_total:
           payload?.utility_total ??
-          (paymentOrder
-            ? utilityInput.trim() === ""
-              ? Math.max(0, Number(paymentOrder.utility_total) || 0)
-              : parseCopAmount(utilityInput)
-            : 0),
+          (paymentOrder ? Math.max(0, Number(paymentOrder.utility_total) || 0) : 0),
       };
       const res = await fetch(`/api/pos/orders/${orderId}/close`, {
         method: "POST",
@@ -1067,6 +1177,7 @@ export default function PosScreen() {
 
   function resetPaymentForm() {
     setPaymentStep("choice");
+    setPaymentMethod("efectivo");
     setSelectedCustomerId("");
     setCustomerSearchInput("");
     setCustomerNameInput("");
@@ -1076,7 +1187,6 @@ export default function PosScreen() {
     setIssueElectronicInvoice(false);
     setApplyConsumptionTax(false);
     setServiceTipInput("");
-    setUtilityInput("");
     setPaymentStatus({ kind: "idle" });
   }
 
@@ -1085,13 +1195,78 @@ export default function PosScreen() {
     setPaymentModalOpen(true);
     resetPaymentForm();
     setServiceTipInput(String(Math.max(0, Number(order.service_total) || 0)));
-    setUtilityInput(String(Math.max(0, Number(order.utility_total) || 0)));
   }
 
   function closePaymentModal() {
     setPaymentModalOpen(false);
     setPaymentOrder(null);
     resetPaymentForm();
+  }
+
+  function printPreFactura() {
+    if (!paymentOrder || !paymentPreview) {
+      window.alert("No hay resumen de totales para generar la pre-factura.");
+      return;
+    }
+    const w = window.open("", "_blank");
+    if (!w) {
+      window.alert("Permite ventanas emergentes para imprimir la pre-factura.");
+      return;
+    }
+    const when = dayjs().tz(COLOMBIA_TZ).format("DD/MM/YYYY HH:mm");
+    const tableName = getTableName(paymentOrder.table_id);
+    const rows = paymentOrder.items
+      .map(
+        (it) => `<tr>
+          <td style="padding:4px 8px;border:1px solid #ccc;">${escapeHtml(it.name)}</td>
+          <td style="padding:4px 8px;border:1px solid #ccc;text-align:right;">${escapeHtml(String(it.quantity))}</td>
+          <td style="padding:4px 8px;border:1px solid #ccc;text-align:right;">${formatMoney(it.line_total)}</td>
+        </tr>`,
+      )
+      .join("");
+    w.document.write(
+      `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pre-factura</title></head>
+      <body style="font-family:system-ui,sans-serif;padding:20px;max-width:520px;">
+      <h1 style="font-size:18px;margin:0 0 8px 0;">${escapeHtml(BUSINESS_NAME)}</h1>
+      <p style="margin:0 0 8px 0;font-size:12px;color:#444;">Pre-factura / comprobante de consumo. No reemplaza la factura electrónica; si aplica, se emite vía Factus al guardar pago con facturación activada.</p>
+      <p style="font-size:13px;margin:0 0 4px 0;"><strong>Pedido</strong> #${paymentOrder.id} &nbsp;|&nbsp; <strong>Mesa</strong> ${escapeHtml(tableName)} &nbsp;|&nbsp; ${when}</p>
+      <p style="font-size:13px;margin:0 0 8px 0;"><strong>Medio de pago (preferencia)</strong>: ${escapeHtml(paymentMethodLabel(paymentMethod))}</p>
+      <table style="width:100%;border-collapse:collapse;margin-top:4px;">
+        <thead><tr><th style="text-align:left;border:1px solid #ccc;padding:4px 8px;">Item</th>
+        <th style="border:1px solid #ccc;padding:4px 8px;">Cant.</th>
+        <th style="border:1px solid #ccc;padding:4px 8px;">Total</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="margin-top:12px;font-size:13px;">
+        <p style="margin:2px 0;">Subtotal: ${formatMoney(paymentPreview.subtotal)}</p>
+        <p style="margin:2px 0;">INC: ${formatMoney(paymentPreview.incTotal)}</p>
+        <p style="margin:2px 0;">Servicio: ${formatMoney(paymentPreview.serviceTotal)}</p>
+        <p style="margin:8px 0 0 0;"><strong>Total: ${formatMoney(paymentPreview.total)}</strong></p>
+      </div>
+      </body></html>`,
+    );
+    w.document.close();
+    w.focus();
+    w.print();
+  }
+
+  function downloadPreFacturaPdf() {
+    if (!paymentOrder || !paymentPreview) {
+      window.alert("No hay resumen de totales para generar la pre-factura.");
+      return;
+    }
+    try {
+      const doc = buildPreFacturaPdf(
+        paymentOrder,
+        paymentPreview,
+        getTableName(paymentOrder.table_id),
+        paymentMethod,
+      );
+      doc.save(`pre-factura-pedido-${paymentOrder.id}.pdf`);
+    } catch (err) {
+      console.error(err);
+      window.alert("No se pudo generar el PDF. Proba de nuevo.");
+    }
   }
 
   async function loadCustomers() {
@@ -1955,7 +2130,7 @@ export default function PosScreen() {
           onClick={closePaymentModal}
         >
           <div
-            className="w-full max-w-lg rounded-2xl border border-stroke bg-white p-5 shadow-2xl opacity-0 animate-[fadeIn_200ms_ease-out_60ms_forwards] dark:border-dark-3 dark:bg-gray-dark"
+            className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl border border-stroke bg-white p-5 shadow-2xl opacity-0 animate-[fadeIn_200ms_ease-out_60ms_forwards] dark:border-dark-3 dark:bg-gray-dark"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-2">
@@ -1974,72 +2149,6 @@ export default function PosScreen() {
               >
                 Cerrar
               </button>
-            </div>
-
-            <div className="mt-4 rounded-lg border border-primary/25 bg-primary/5 p-3">
-              <label className="inline-flex items-center gap-2 text-sm font-medium text-dark dark:text-white">
-                <input
-                  type="checkbox"
-                  checked={applyConsumptionTax}
-                  onChange={(e) => setApplyConsumptionTax(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                Aplicar impuesto al consumo (INC 8%)
-              </label>
-              <p className="mt-1 text-xs text-body-color dark:text-dark-6">
-                Si no lo marcas, el pedido se cierra sin INC.
-              </p>
-
-              <div className="mt-3">
-                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
-                  Propina (COP)
-                </label>
-                <input
-                  value={serviceTipInput}
-                  onChange={(e) => setServiceTipInput(e.target.value)}
-                  inputMode="decimal"
-                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
-                  placeholder="Ej: 5000"
-                />
-              </div>
-
-              <div className="mt-3">
-                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
-                  Utilidad (COP)
-                </label>
-                <input
-                  value={utilityInput}
-                  onChange={(e) => setUtilityInput(e.target.value)}
-                  inputMode="decimal"
-                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
-                  placeholder="Ej: 3000"
-                />
-              </div>
-
-              {paymentPreview ? (
-                <div className="mt-3 space-y-1 rounded-md border border-primary/20 bg-white/70 p-2 text-xs text-dark dark:border-dark-3 dark:bg-dark-2 dark:text-white">
-                  <div className="flex items-center justify-between">
-                    <span>Subtotal</span>
-                    <span>{formatMoney(paymentPreview.subtotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>INC</span>
-                    <span>{formatMoney(paymentPreview.incTotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Servicio</span>
-                    <span>{formatMoney(paymentPreview.serviceTotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Utilidad</span>
-                    <span>{formatMoney(paymentPreview.utilityTotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between font-semibold">
-                    <span>Total a cobrar</span>
-                    <span>{formatMoney(paymentPreview.total)}</span>
-                  </div>
-                </div>
-              ) : null}
             </div>
 
             <div className="mt-4 rounded-lg border border-primary/25 bg-primary/5 p-3">
@@ -2075,6 +2184,143 @@ export default function PosScreen() {
                 </div>
               ) : null}
             </div>
+
+            <div className="mt-4 rounded-lg border border-primary/25 bg-primary/5 p-3">
+              <label className="inline-flex items-center gap-2 text-sm font-medium text-dark dark:text-white">
+                <input
+                  type="checkbox"
+                  checked={applyConsumptionTax}
+                  onChange={(e) => setApplyConsumptionTax(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                Aplicar impuesto al consumo (INC 8%)
+              </label>
+              <p className="mt-1 text-xs text-body-color dark:text-dark-6">
+                Si no lo marcas, el pedido se cierra sin INC.
+              </p>
+
+              <div className="mt-3">
+                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                  Propina (COP)
+                </label>
+                <input
+                  value={serviceTipInput}
+                  onChange={(e) => setServiceTipInput(e.target.value)}
+                  inputMode="decimal"
+                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                  placeholder="Ej: 5000"
+                />
+              </div>
+
+              {paymentPreview ? (
+                <div className="mt-3 space-y-1 rounded-md border border-primary/20 bg-white/70 p-2 text-xs text-dark dark:border-dark-3 dark:bg-dark-2 dark:text-white">
+                  <div className="flex items-center justify-between">
+                    <span>Subtotal</span>
+                    <span>{formatMoney(paymentPreview.subtotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>INC</span>
+                    <span>{formatMoney(paymentPreview.incTotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Servicio</span>
+                    <span>{formatMoney(paymentPreview.serviceTotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between font-semibold">
+                    <span>Total a cobrar</span>
+                    <span>{formatMoney(paymentPreview.total)}</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 rounded-lg border border-stroke bg-gray-1 p-3 dark:border-dark-3 dark:bg-white/5">
+              <label className="mb-1 block text-sm font-semibold text-dark dark:text-white">
+                Medio de pago (preferencia del cliente)
+              </label>
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+              >
+                {PAYMENT_METHOD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {paymentPreview && paymentOrder ? (
+              <div className="mt-4 rounded-lg border border-dashed border-secondary/50 bg-white p-3 dark:border-secondary/30 dark:bg-dark-2">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-sm font-semibold text-dark dark:text-white">Pre-factura (cliente)</h4>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={downloadPreFacturaPdf}
+                      className="rounded-md bg-secondary px-3 py-1.5 text-xs font-semibold text-white hover:bg-secondary/90"
+                    >
+                      Descargar PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={printPreFactura}
+                      className="rounded-md border border-secondary/60 bg-white px-3 py-1.5 text-xs font-semibold text-secondary hover:bg-secondary/10"
+                    >
+                      Imprimir
+                    </button>
+                  </div>
+                </div>
+                <p className="mb-2 text-[11px] text-body-color dark:text-dark-6">
+                  Documento informativo para el cliente. La factura electrónica (si la activaste arriba) la
+                  emite Factus; esta hoja no tiene CUFE.
+                </p>
+                <p className="mb-2 text-xs text-dark dark:text-white">
+                  Medio: <span className="font-semibold">{paymentMethodLabel(paymentMethod)}</span>
+                </p>
+                <div className="max-h-40 overflow-y-auto rounded border border-stroke dark:border-dark-3">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Producto</TableHead>
+                        <TableHead className="text-right">Cant.</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paymentOrder.items.map((it) => (
+                        <TableRow key={it.id}>
+                          <TableCell className="text-sm">{it.name}</TableCell>
+                          <TableCell className="text-right text-sm">{it.quantity}</TableCell>
+                          <TableCell className="text-right text-sm font-medium">
+                            {formatMoney(it.line_total)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="mt-2 space-y-0.5 text-xs text-dark dark:text-white">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>{formatMoney(paymentPreview.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>INC</span>
+                    <span>{formatMoney(paymentPreview.incTotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Servicio</span>
+                    <span>{formatMoney(paymentPreview.serviceTotal)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <span>Total</span>
+                    <span>{formatMoney(paymentPreview.total)}</span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {paymentStep === "choice" ? (
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -2560,18 +2806,6 @@ export default function PosScreen() {
                                 }))
                               }
                               className="w-16 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
-                            />
-                          </label>
-                          <label className="flex items-center gap-1">
-                            INC (al pagar)
-                            <input
-                              type="number"
-                              min={0}
-                              max={0}
-                              step="0.01"
-                              value={0}
-                              readOnly
-                              className="w-20 rounded border border-stroke bg-transparent px-2 py-1 text-xs dark:border-dark-3"
                             />
                           </label>
                           <label className="flex items-center gap-1">

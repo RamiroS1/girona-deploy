@@ -1,6 +1,16 @@
 "use client";
 
+import PurchasesMetricsPanel, {
+  type PurchaseRecord,
+} from "@/components/Dashboard/purchases-metrics-panel";
+import {
+  aggregateSalesBreakdown,
+  filterPurchasesByTimeFilter,
+  sumPurchaseTotalCost,
+} from "@/components/Sales/aggregate-sales-breakdown";
+import SalesBreakdownPanel from "@/components/Sales/sales-breakdown-panel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import Link from "next/link";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
@@ -27,6 +37,7 @@ type SaleItem = {
 type Sale = {
   id: number;
   order_id: number;
+  payment_method?: string | null;
   subtotal: number | string;
   tax_total: number | string;
   discount_total: number | string;
@@ -99,6 +110,21 @@ const TIME_FILTER_OPTIONS: Array<{ value: TimeFilter; label: string }> = [
   { value: "quarter", label: "3 meses" },
   { value: "year", label: "Año" },
 ];
+
+const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  efectivo: "Efectivo",
+  tarjeta: "Tarjeta (crédito/débito)",
+  tarjeta_credito: "Tarjeta de Crédito",
+  tarjeta_debito: "Tarjeta de Débito",
+  transferencia: "Transferencia",
+  billetera: "Billetera / Nequi / Daviplata",
+  otro: "Otro",
+};
+
+function salePaymentMethodLabel(v: string | null | undefined) {
+  if (!v) return "—";
+  return PAYMENT_METHOD_LABEL[v] ?? v;
+}
 
 function safeNumber(value: unknown) {
   const num = typeof value === "number" ? value : Number.parseFloat(String(value));
@@ -267,6 +293,8 @@ export default function Sales() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sendingEmailSaleId, setSendingEmailSaleId] = useState<number | null>(null);
+  const [purchases, setPurchases] = useState<PurchaseRecord[]>([]);
+  const [purchasesLoading, setPurchasesLoading] = useState(true);
 
   const withPeriodParam = useCallback((basePath: string, period: TimeFilter) => {
     return `${basePath}?period=${encodeURIComponent(period)}`;
@@ -276,6 +304,7 @@ export default function Sales() {
     setLoading(true);
     setErrorMessage(null);
     try {
+      setPurchasesLoading(true);
       const [
         salesResponse,
         productsResponse,
@@ -283,6 +312,7 @@ export default function Sales() {
         waitersResponse,
         tablesResponse,
         adjustmentsMonthlyResponse,
+        purchasesResponse,
       ] = await Promise.all([
         fetch(withPeriodParam("/api/sales", salesHistoryFilter), { cache: "no-store" }),
         fetch(withPeriodParam("/api/sales/summary/products", salesByProductFilter), {
@@ -304,6 +334,7 @@ export default function Sales() {
           ),
           { cache: "no-store" },
         ),
+        fetch("/api/inventory/purchases", { cache: "no-store" }),
       ]);
 
       const [
@@ -313,6 +344,7 @@ export default function Sales() {
         waitersPayload,
         tablesPayload,
         adjustmentsMonthlyPayload,
+        purchasesPayload,
       ] = await Promise.all([
         safeJson(salesResponse),
         safeJson(productsResponse),
@@ -320,6 +352,7 @@ export default function Sales() {
         safeJson(waitersResponse),
         safeJson(tablesResponse),
         safeJson(adjustmentsMonthlyResponse),
+        safeJson(purchasesResponse),
       ]);
 
       if (!salesResponse.ok) {
@@ -353,6 +386,11 @@ export default function Sales() {
             "No se pudo cargar cortesias/descuentos por mes",
         );
       }
+      if (purchasesResponse.ok && Array.isArray(purchasesPayload)) {
+        setPurchases(purchasesPayload as PurchaseRecord[]);
+      } else {
+        setPurchases([]);
+      }
 
       setSales(Array.isArray(salesPayload) ? (salesPayload as Sale[]) : []);
       setSalesByProduct(
@@ -375,6 +413,7 @@ export default function Sales() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo cargar ventas";
       setErrorMessage(message);
+      setPurchases([]);
       setSales([]);
       setSalesByProduct([]);
       setSalesByCategory([]);
@@ -383,6 +422,7 @@ export default function Sales() {
       setSalesAdjustmentsByMonth([]);
     } finally {
       setLoading(false);
+      setPurchasesLoading(false);
     }
   }, [
     adjustmentsMonthlyFilter,
@@ -453,6 +493,15 @@ export default function Sales() {
   const totalDiscountApplied = useMemo(
     () => sales.reduce((acc, sale) => acc + safeNumber(sale.discount_count), 0),
     [sales],
+  );
+  const salesBreakdown = useMemo(() => aggregateSalesBreakdown(sales), [sales]);
+  const purchasesInSalesPeriod = useMemo(
+    () => filterPurchasesByTimeFilter(purchases, salesHistoryFilter),
+    [purchases, salesHistoryFilter],
+  );
+  const totalPurchasesInSalesPeriod = useMemo(
+    () => sumPurchaseTotalCost(purchasesInSalesPeriod),
+    [purchasesInSalesPeriod],
   );
   const salesHistoryTotalPages = Math.max(
     1,
@@ -559,6 +608,14 @@ export default function Sales() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Link
+          href="/sales/report"
+          className="rounded-md bg-secondary px-4 py-2 text-sm font-medium text-white transition hover:bg-secondary/90"
+        >
+          Informe de ventas
+        </Link>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-sm border border-stroke bg-white px-5 py-4 shadow-default transition-all hover:-translate-y-0.5 hover:shadow-lg dark:border-dark-3 dark:bg-gray-dark">
           <p className="text-sm text-body">Ventas registradas</p>
@@ -567,7 +624,7 @@ export default function Sales() {
           </p>
         </div>
         <div className="rounded-sm border border-stroke bg-white px-5 py-4 shadow-default transition-all hover:-translate-y-0.5 hover:shadow-lg dark:border-dark-3 dark:bg-gray-dark">
-          <p className="text-sm text-body">Total vendido</p>
+          <p className="text-sm text-body">Total facturado</p>
           <p className="mt-2 text-2xl font-semibold text-black dark:text-white">
             {formatMoney(totalSalesValue)}
           </p>
@@ -591,6 +648,17 @@ export default function Sales() {
           </p>
         </div>
       </div>
+
+      <SalesBreakdownPanel
+        title="Total facturado y desglose (métricas de ventas)"
+        subtitle="Alineado al filtro de tiempo del historial de ventas. Las compras se filtran con el mismo periodo móvil (7 / 30 / 90 / 365 días) o sin recorte en “Mostrar todo”."
+        loading={loading}
+        breakdown={salesBreakdown}
+        purchasesTotal={totalPurchasesInSalesPeriod}
+        formatMoney={(v) => formatMoney(v)}
+      />
+
+      <PurchasesMetricsPanel purchases={purchases} loading={purchasesLoading} />
 
       <div className="rounded-sm border border-stroke bg-white p-6 shadow-default dark:border-dark-3 dark:bg-gray-dark">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -625,6 +693,7 @@ export default function Sales() {
                 <TableHead>Venta</TableHead>
                 <TableHead>Pedido</TableHead>
                 <TableHead>Fecha</TableHead>
+                <TableHead>Medio de pago</TableHead>
                 <TableHead>Factura electronica</TableHead>
                 <TableHead>Items</TableHead>
                 <TableHead>Cortesías</TableHead>
@@ -649,6 +718,9 @@ export default function Sales() {
                     </TableCell>
                     <TableCell>#{sale.order_id}</TableCell>
                     <TableCell>{formatDate(sale.created_at)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-black dark:text-white">
+                      {salePaymentMethodLabel(sale.payment_method ?? undefined)}
+                    </TableCell>
                     <TableCell>
                       {sale.electronic_invoice_status === "issued" ? (
                         <div className="space-y-1">

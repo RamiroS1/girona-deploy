@@ -10,6 +10,7 @@ import {
 } from "@/components/Sales/aggregate-sales-breakdown";
 import SalesBreakdownPanel from "@/components/Sales/sales-breakdown-panel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableScroll } from "@/components/ui/scroll-table";
 import Link from "next/link";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
@@ -204,9 +205,9 @@ function PaginationControls({
   const pages = Array.from({ length: totalPages }, (_, index) => index + 1);
 
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+    <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <p className="text-xs text-body">{`Página ${page} de ${totalPages}`}</p>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex max-w-full flex-wrap items-center gap-1.5">
         <button
           type="button"
           onClick={() => onPageChange(page - 1)}
@@ -251,12 +252,12 @@ function TimeFilterSelect({
   onChange: (nextValue: TimeFilter) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm text-body">
-      Tiempo
+    <label className="flex w-full min-w-0 flex-col gap-1 text-sm text-body sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+      <span className="shrink-0">Tiempo</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value as TimeFilter)}
-        className="rounded-md border border-stroke bg-white px-2 py-1 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-dark-2 dark:text-white"
+        className="w-full min-w-0 rounded-md border border-stroke bg-white px-2 py-1.5 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-dark-2 dark:text-white sm:w-auto sm:min-w-[11rem] sm:py-1"
       >
         {TIME_FILTER_OPTIONS.map((option) => (
           <option key={option.value} value={option.value}>
@@ -608,15 +609,15 @@ export default function Sales() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
         <Link
           href="/sales/report"
-          className="rounded-md bg-secondary px-4 py-2 text-sm font-medium text-white transition hover:bg-secondary/90"
+          className="w-full rounded-md bg-secondary px-4 py-2.5 text-center text-sm font-medium text-white transition hover:bg-secondary/90 sm:w-auto sm:py-2"
         >
           Informe de ventas
         </Link>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-5">
         <div className="rounded-sm border border-stroke bg-white px-5 py-4 shadow-default transition-all hover:-translate-y-0.5 hover:shadow-lg dark:border-dark-3 dark:bg-gray-dark">
           <p className="text-sm text-body">Ventas registradas</p>
           <p className="mt-2 text-2xl font-semibold text-black dark:text-white">
@@ -661,14 +662,14 @@ export default function Sales() {
       <PurchasesMetricsPanel purchases={purchases} loading={purchasesLoading} />
 
       <div className="rounded-sm border border-stroke bg-white p-6 shadow-default dark:border-dark-3 dark:bg-gray-dark">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h3 className="text-xl font-semibold text-black dark:text-white">Historial de ventas</h3>
             <p className="text-sm text-body">
               Pedidos pagados registrados desde toma de pedidos.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <TimeFilterSelect value={salesHistoryFilter} onChange={setSalesHistoryFilter} />
             <button
               type="button"
@@ -687,6 +688,7 @@ export default function Sales() {
         ) : sales.length === 0 ? (
           <p className="text-sm text-body">No hay ventas registradas.</p>
         ) : (
+          <TableScroll className="-mx-2 sm:mx-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -806,6 +808,7 @@ export default function Sales() {
               })}
             </TableBody>
           </Table>
+          </TableScroll>
         )}
         {!loading && !errorMessage ? (
           <PaginationControls
@@ -833,6 +836,7 @@ export default function Sales() {
         ) : salesByTable.length === 0 ? (
           <p className="text-sm text-body">No hay datos para mostrar.</p>
         ) : (
+          <TableScroll className="-mx-2 sm:mx-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -860,6 +864,7 @@ export default function Sales() {
               })}
             </TableBody>
           </Table>
+          </TableScroll>
         )}
         {!loading ? (
           <PaginationControls
@@ -888,6 +893,7 @@ export default function Sales() {
           ) : salesByProduct.length === 0 ? (
             <p className="text-sm text-body">No hay datos para mostrar.</p>
           ) : (
+            <TableScroll className="-mx-2 sm:mx-0">
             <Table>
               <TableHeader>
                 <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2">
@@ -912,6 +918,7 @@ export default function Sales() {
                 ))}
               </TableBody>
             </Table>
+            </TableScroll>
           )}
           {!loading ? (
             <PaginationControls
@@ -939,6 +946,7 @@ export default function Sales() {
           ) : salesByCategory.length === 0 ? (
             <p className="text-sm text-body">No hay datos para mostrar.</p>
           ) : (
+            <TableScroll className="-mx-2 sm:mx-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -961,6 +969,7 @@ export default function Sales() {
                 ))}
               </TableBody>
             </Table>
+            </TableScroll>
           )}
           {!loading ? (
             <PaginationControls
@@ -990,6 +999,7 @@ export default function Sales() {
           ) : salesByWaiter.length === 0 ? (
             <p className="text-sm text-body">No hay datos para mostrar.</p>
           ) : (
+            <TableScroll className="-mx-2 sm:mx-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1014,6 +1024,7 @@ export default function Sales() {
                 ))}
               </TableBody>
             </Table>
+            </TableScroll>
           )}
           {!loading ? (
             <PaginationControls
@@ -1046,6 +1057,7 @@ export default function Sales() {
           ) : salesAdjustmentsByMonth.length === 0 ? (
             <p className="text-sm text-body">No hay datos para mostrar.</p>
           ) : (
+            <TableScroll className="-mx-2 sm:mx-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1066,6 +1078,7 @@ export default function Sales() {
                 ))}
               </TableBody>
             </Table>
+            </TableScroll>
           )}
           {!loading ? (
             <PaginationControls

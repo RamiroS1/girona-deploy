@@ -37,7 +37,7 @@ export function MenuItem(
         className={cn(
           menuItemBaseStyles({
             isActive: props.isActive,
-            className: "relative block py-2",
+            className: "relative block min-h-[44px] py-2.5",
           }),
           props.className,
         )}
@@ -53,7 +53,7 @@ export function MenuItem(
       aria-expanded={props.isActive}
       className={menuItemBaseStyles({
         isActive: props.isActive,
-        className: "flex w-full items-center gap-3 py-3",
+        className: "flex w-full min-h-[44px] items-center gap-3 py-3",
       })}
     >
       {props.children}

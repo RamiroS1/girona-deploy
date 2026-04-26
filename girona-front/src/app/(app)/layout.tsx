@@ -4,13 +4,13 @@ import type { PropsWithChildren } from "react";
 
 export default function AppLayout({ children }: PropsWithChildren) {
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen min-h-[100dvh]">
       <Sidebar />
 
-      <div className="w-full bg-gray-2 dark:bg-[#020d1a]">
+      <div className="flex min-w-0 flex-1 flex-col bg-gray-2 dark:bg-[#020d1a]">
         <Header />
 
-        <main className="mx-auto w-full max-w-screen-2xl overflow-hidden p-4 md:p-6 2xl:p-10">
+        <main className="mx-auto w-full min-w-0 max-w-screen-2xl overflow-x-clip p-3 sm:p-4 md:p-6 2xl:p-10">
           {children}
         </main>
       </div>

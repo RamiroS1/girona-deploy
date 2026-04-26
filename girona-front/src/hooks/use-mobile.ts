@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-export const MOBILE_BREAKPOINT = 850;
+/** Alineado con Tailwind `lg:` (1024px): menú hamburguesa y barra lateral en cajón */
+export const MOBILE_BREAKPOINT = 1024;
 
 export function useIsMobile() {
   const [isMobile, setIsMobile] = useState<boolean>();

@@ -3,6 +3,7 @@
 import { CheckIcon, SearchIcon, TrashIcon } from "@/assets/icons";
 import { DownloadIcon, PreviewIcon } from "@/components/Tables/icons";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableScroll } from "@/components/ui/scroll-table";
 import { Tooltip } from "@/components/ui/tooltip";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
@@ -1626,14 +1627,14 @@ export default function PosScreen() {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          <div>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold text-dark dark:text-white">Mesas</h2>
             <p className="text-sm text-body-color dark:text-dark-6">
               Crea mesas y asigna el pedido.
             </p>
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-col gap-2 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
             <input
               value={newTableName}
               onChange={(e) => setNewTableName(e.target.value)}
@@ -1773,6 +1774,7 @@ export default function PosScreen() {
         {activeOrders.length === 0 ? (
           <p className="text-sm text-dark-6 dark:text-dark-6">No hay pedidos en curso.</p>
         ) : (
+          <TableScroll className="-mx-1 sm:mx-0">
           <Table>
             <TableHeader>
               <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2 [&>th]:py-4 [&>th]:text-base [&>th]:text-dark [&>th]:dark:text-white">
@@ -1917,12 +1919,13 @@ export default function PosScreen() {
               })}
             </TableBody>
           </Table>
+          </TableScroll>
         )}
       </div>
 
       <div className="mt-6 rounded-[10px] border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <div>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold text-dark dark:text-white">
               Historial de pedidos finalizados
             </h2>
@@ -1935,7 +1938,7 @@ export default function PosScreen() {
             onClick={handleClearFinishedOrders}
             disabled={finishedOrders.length === 0 || clearFinishedStatus === "loading"}
             className={
-              "ml-auto rounded-lg border px-3 py-2 text-sm font-semibold " +
+              "w-full shrink-0 rounded-lg border px-3 py-2 text-sm font-semibold sm:ml-auto sm:w-auto " +
               (finishedOrders.length === 0 || clearFinishedStatus === "loading"
                 ? "cursor-not-allowed border-gray-200 text-gray-400"
                 : "border-red/60 text-red hover:border-red hover:bg-red/10")
@@ -1948,6 +1951,7 @@ export default function PosScreen() {
         {finishedOrders.length === 0 ? (
           <p className="text-sm text-dark-6 dark:text-dark-6">Sin historial aún.</p>
         ) : (
+          <TableScroll className="-mx-1 sm:mx-0">
           <Table>
             <TableHeader>
               <TableRow className="border-none bg-[#F7F9FC] dark:bg-dark-2 [&>th]:py-4 [&>th]:text-base [&>th]:text-dark [&>th]:dark:text-white">
@@ -2043,6 +2047,7 @@ export default function PosScreen() {
               })}
             </TableBody>
           </Table>
+          </TableScroll>
         )}
       </div>
 

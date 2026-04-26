@@ -1014,7 +1014,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
   }
 
   return (
-    <div className="rounded-2xl border border-stroke bg-white p-6 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card">
+    <div className="rounded-2xl border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark dark:shadow-card sm:p-6">
       <div className="mb-6">
         <div className="inline-flex w-full gap-1 rounded-xl bg-gray-2 p-1 dark:bg-dark-2">
           <button
@@ -1028,7 +1028,9 @@ export default function Menu({ items }: { items: MenuItem[] }) {
             }
           >
             <RiRestaurantLine className="h-5 w-5 shrink-0" aria-hidden="true" />
-            <span>Restaurante ({restauranteItems.length})</span>
+            <span className="xsm:hidden">Rest. </span>
+            <span className="hidden xsm:inline">Restaurante </span>
+            <span>({restauranteItems.length})</span>
           </button>
           <button
             type="button"
@@ -1046,7 +1048,7 @@ export default function Menu({ items }: { items: MenuItem[] }) {
         </div>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <button
           type="button"
           onClick={() => {
@@ -1057,11 +1059,11 @@ export default function Menu({ items }: { items: MenuItem[] }) {
               startCreate();
             }
           }}
-          className="flex items-center rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary/90"
+          className="flex w-full items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 sm:w-auto"
         >
           {showCreate ? "Cerrar" : "Agregar categoría / item"}
         </button>
-        <div className="relative ml-auto w-full max-w-xs">
+        <div className="relative w-full sm:ml-auto sm:max-w-xs">
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}

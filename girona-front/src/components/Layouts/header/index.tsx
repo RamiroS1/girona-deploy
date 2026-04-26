@@ -1,6 +1,5 @@
 "use client";
 
-import { SearchIcon } from "@/assets/icons";
 import Image from "next/image";
 import Link from "next/link";
 import { useSidebarContext } from "../sidebar/sidebar-context";
@@ -13,45 +12,37 @@ export function Header() {
   const { toggleSidebar, isMobile } = useSidebarContext();
 
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between border-b border-stroke bg-white px-4 py-5 shadow-1 dark:border-stroke-dark dark:bg-gray-dark md:px-5 2xl:px-10">
-      <button
-        onClick={toggleSidebar}
-        className="rounded-lg border px-1.5 py-1 dark:border-stroke-dark dark:bg-[#020D1A] hover:dark:bg-[#FFFFFF1A] lg:hidden"
-      >
-        <MenuIcon />
-        <span className="sr-only">Toggle Sidebar</span>
-      </button>
+    <header className="sticky top-0 z-30 flex min-h-[4.25rem] items-center gap-2 border-b border-stroke bg-white px-2 py-3 shadow-1 [padding-left:max(0.5rem,env(safe-area-inset-left))] [padding-right:max(0.5rem,env(safe-area-inset-right))] sm:gap-3 sm:px-4 sm:py-4 md:px-5 2xl:px-10">
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="shrink-0 rounded-lg border px-1.5 py-1.5 dark:border-stroke-dark dark:bg-[#020D1A] hover:dark:bg-[#FFFFFF1A] lg:hidden"
+        >
+          <MenuIcon />
+          <span className="sr-only">Abrir o cerrar menú</span>
+        </button>
 
-      {isMobile && (
-        <Link href={"/"} className="ml-2 max-[430px]:hidden min-[375px]:ml-4">
-          <Image
-            src={"/images/logo/LogoGP.svg"}
-            width={32}
-            height={32}
-            alt=""
-            role="presentation"
-          />
-        </Link>
-      )}
+        {isMobile ? (
+          <Link href="/" className="hidden shrink-0 min-[420px]:block">
+            <Image
+              src="/images/logo/LogoGP.svg"
+              width={32}
+              height={32}
+              alt=""
+              role="presentation"
+            />
+          </Link>
+        ) : null}
+      </div>
 
-      <div className="max-xl:hidden">
-        <h1 className="mb-0.5 text-heading-5 font-bold text-dark dark:text-white">
+      <div className="min-w-0 flex-1 px-1">
+        <h1 className="truncate text-center text-sm font-bold text-dark dark:text-white sm:text-base md:text-lg xl:text-heading-5">
           Girona - Software
         </h1>
       </div>
 
-      <div className="flex flex-1 items-center justify-end gap-2 min-[375px]:gap-4">
-        <div className="relative w-full max-w-[300px]">
-          {/* <input
-            type="search"
-            placeholder="Search"
-            className="flex w-full items-center gap-3.5 rounded-full border bg-gray-2 py-3 pl-[53px] pr-5 outline-none transition-colors focus-visible:border-primary dark:border-dark-3 dark:bg-dark-2 dark:hover:border-dark-4 dark:hover:bg-dark-3 dark:hover:text-dark-6 dark:focus-visible:border-primary"
-          /> 
-
-          <SearchIcon className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 max-[1015px]:size-5" />
-        */}
-          </div>
-
+      <div className="flex shrink-0 items-center gap-1.5 min-[400px]:gap-2 sm:gap-4">
         <ThemeToggleSwitch />
 
         <Notification />

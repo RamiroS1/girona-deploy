@@ -4,6 +4,7 @@ import PurchasesMetricsPanel, {
   type PurchaseRecord,
 } from "@/components/Dashboard/purchases-metrics-panel";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableScroll } from "@/components/ui/scroll-table";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
@@ -264,7 +265,7 @@ export default function ControlPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <StatCard
           title="Venta del dia"
           value={formatMoney(totalSalesToday - totalTipsToday)}
@@ -315,6 +316,7 @@ export default function ControlPanel() {
           ) : topProductsRows.length === 0 ? (
             <p className="text-sm text-body">Sin datos por ahora.</p>
           ) : (
+            <TableScroll>
             <Table>
               <TableHeader>
                 <TableRow className="bg-primary/10 text-primary hover:bg-primary/10 dark:hover:bg-primary/10">
@@ -342,6 +344,7 @@ export default function ControlPanel() {
                 ))}
               </TableBody>
             </Table>
+            </TableScroll>
           )}
         </div>
 
@@ -355,6 +358,7 @@ export default function ControlPanel() {
           ) : topWaitersRows.length === 0 ? (
             <p className="text-sm text-body">Sin datos por ahora.</p>
           ) : (
+            <TableScroll>
             <Table>
               <TableHeader>
                 <TableRow className="bg-secondary/15 text-secondary hover:bg-secondary/15 dark:hover:bg-secondary/15">
@@ -380,6 +384,7 @@ export default function ControlPanel() {
                 ))}
               </TableBody>
             </Table>
+            </TableScroll>
           )}
         </div>
       </div>

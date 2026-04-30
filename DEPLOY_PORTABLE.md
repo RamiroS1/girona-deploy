@@ -32,7 +32,9 @@ docker compose up -d --build
 
 5. Abre la app:
    - Frontend: `http://localhost:3000`
-   - Backend: `http://localhost:8000`
+   - Backend: `http://localhost:8000` (o el puerto que hayas puesto en `BACKEND_HOST_PORT` en `.env`)
+
+Si `docker compose` falla con **address already in use** en el puerto **8000** (p. ej. `docker-proxy` de Docker Snap), define en `.env` `BACKEND_HOST_PORT=28000` y vuelve a `docker compose up -d --build`, o ejecuta `sudo systemctl restart docker` y reintenta.
 
 ## Scripts incluidos
 

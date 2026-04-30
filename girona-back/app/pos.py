@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from . import db, models, schemas
 
@@ -21,6 +21,8 @@ INC_RATE = Decimal("0.08")
 
 BAR_CATEGORY_KEYS = {
     "bebidas",
+    "malteadas",
+    "dulces bar",
     "sodas",
     "gaseosas",
     "para el almuerzo",
@@ -427,7 +429,23 @@ def delete_table(table_id: int, db_session: Session = Depends(db.get_db)):
 def create_order(payload: schemas.PosOrderCreate, db_session: Session = Depends(db.get_db)):
     table = _table_or_404(db_session, payload.table_id)
 
-    order = models.PosOrder(table_id=table.id, status="open", service_total=payload.service_total)
+    waiter_id: int | None = None
+    if payload.waiter_id is not None:
+        waiter = (
+            db_session.query(models.Waiter)
+            .filter(models.Waiter.id == payload.waiter_id, models.Waiter.is_active == True)  # noqa: E712
+            .first()
+        )
+        if not waiter:
+            raise HTTPException(status_code=404, detail="Mesero no encontrado")
+        waiter_id = waiter.id
+
+    order = models.PosOrder(
+        table_id=table.id,
+        status="open",
+        service_total=payload.service_total,
+        waiter_id=waiter_id,
+    )
     db_session.add(order)
     db_session.flush()
 
@@ -504,6 +522,7 @@ def create_order(payload: schemas.PosOrderCreate, db_session: Session = Depends(
 def list_orders(db_session: Session = Depends(db.get_db)):
     return (
         db_session.query(models.PosOrder)
+        .options(joinedload(models.PosOrder.waiter))
         .order_by(models.PosOrder.id.desc())
         .limit(200)
         .all()
@@ -523,7 +542,12 @@ def clear_finished_orders(db_session: Session = Depends(db.get_db)):
 
 @router.get("/orders/{order_id}", response_model=schemas.PosOrderOut)
 def get_order(order_id: int, db_session: Session = Depends(db.get_db)):
-    order = db_session.query(models.PosOrder).filter(models.PosOrder.id == order_id).first()
+    order = (
+        db_session.query(models.PosOrder)
+        .options(joinedload(models.PosOrder.waiter))
+        .filter(models.PosOrder.id == order_id)
+        .first()
+    )
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     return order
@@ -668,7 +692,7 @@ def mark_order_delivered(
 
     if payload.delivered:
         waiter_id = payload.waiter_id
-        if waiter_id is not None:
+        if order.waiter_id is None and waiter_id is not None:
             waiter = (
                 db_session.query(models.Waiter)
                 .filter(models.Waiter.id == waiter_id, models.Waiter.is_active == True)  # noqa: E712

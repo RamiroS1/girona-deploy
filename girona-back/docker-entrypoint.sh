@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 DB_HOST="${GIRONA_DB_WAIT_HOST:-host.docker.internal}"
-DB_PORT="${GIRONA_DB_WAIT_PORT:-15432}"
+DB_PORT="${GIRONA_DB_WAIT_PORT:-25432}"
 if [ -n "$DB_PORT" ]; then
   echo "Esperando ${DB_HOST}:${DB_PORT}..."
   i=0

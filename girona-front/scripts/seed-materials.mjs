@@ -28,8 +28,6 @@ Rotuladores x1
 Copa Balón x3
 Copa de michelada x1
 Vasos altos relieve x2
-Bolsas de hielo x10
-Caja de helado x1.5
 Paquetes fichas de parques x5
 Tenedores x15
 Cuchillos x30

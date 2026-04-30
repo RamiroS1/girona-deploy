@@ -46,6 +46,62 @@ def _customer_or_404(db_session: Session, customer_id: int) -> models.Customer:
     return customer
 
 
+def _supplier_ingredient_ids(db_session: Session, supplier_id: int) -> list[int]:
+    rows = (
+        db_session.query(models.SupplierIngredient.product_id)
+        .filter(models.SupplierIngredient.supplier_id == supplier_id)
+        .order_by(models.SupplierIngredient.product_id.asc())
+        .all()
+    )
+    return [int(r[0]) for r in rows]
+
+
+def _supplier_out(db_session: Session, supplier: models.Supplier) -> schemas.SupplierOut:
+    return schemas.SupplierOut(
+        id=supplier.id,
+        name=supplier.name,
+        phone=supplier.phone,
+        gender=supplier.gender,
+        is_active=supplier.is_active,
+        created_at=supplier.created_at,
+        ingredient_product_ids=_supplier_ingredient_ids(db_session, supplier.id),
+    )
+
+
+def _sync_supplier_ingredients(
+    db_session: Session, supplier_id: int, product_ids: list[int]
+) -> None:
+    seen: set[int] = set()
+    unique: list[int] = []
+    for pid in product_ids:
+        if pid in seen:
+            continue
+        seen.add(pid)
+        unique.append(pid)
+
+    for pid in unique:
+        product = (
+            db_session.query(models.InventoryProduct)
+            .filter(models.InventoryProduct.id == pid)
+            .first()
+        )
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Producto de inventario no encontrado (id {pid})")
+        if product.kind != schemas.InventoryProductKind.ingredient.value:
+            raise HTTPException(
+                status_code=400,
+                detail="Solo se pueden vincular productos de tipo ingrediente",
+            )
+
+    db_session.query(models.SupplierIngredient).filter(
+        models.SupplierIngredient.supplier_id == supplier_id
+    ).delete(synchronize_session=False)
+    for pid in unique:
+        db_session.add(
+            models.SupplierIngredient(supplier_id=supplier_id, product_id=pid)
+        )
+
+
 @router.post("/suppliers", response_model=schemas.SupplierOut, status_code=201)
 def create_supplier(
     payload: schemas.SupplierCreate, db_session: Session = Depends(db.get_db)
@@ -65,9 +121,11 @@ def create_supplier(
         is_active=payload.is_active,
     )
     db_session.add(supplier)
+    db_session.flush()
+    _sync_supplier_ingredients(db_session, supplier.id, list(payload.ingredient_product_ids or []))
     db_session.commit()
     db_session.refresh(supplier)
-    return supplier
+    return _supplier_out(db_session, supplier)
 
 
 @router.get("/suppliers", response_model=list[schemas.SupplierOut])
@@ -75,12 +133,14 @@ def list_suppliers(active: bool | None = True, db_session: Session = Depends(db.
     query = db_session.query(models.Supplier)
     if active is not None:
         query = query.filter(models.Supplier.is_active == active)
-    return query.order_by(models.Supplier.name.asc()).all()
+    rows = query.order_by(models.Supplier.name.asc()).all()
+    return [_supplier_out(db_session, s) for s in rows]
 
 
 @router.get("/suppliers/{supplier_id}", response_model=schemas.SupplierOut)
 def get_supplier(supplier_id: int, db_session: Session = Depends(db.get_db)):
-    return _supplier_or_404(db_session, supplier_id)
+    supplier = _supplier_or_404(db_session, supplier_id)
+    return _supplier_out(db_session, supplier)
 
 
 @router.put("/suppliers/{supplier_id}", response_model=schemas.SupplierOut)
@@ -92,6 +152,7 @@ def update_supplier(
     supplier = _supplier_or_404(db_session, supplier_id)
 
     data = payload.dict(exclude_unset=True)
+    ingredient_ids = data.pop("ingredient_product_ids", None)
     if "name" in data and data["name"] is not None:
         candidate = data["name"].strip()
         existing = (
@@ -114,10 +175,13 @@ def update_supplier(
     for key, value in data.items():
         setattr(supplier, key, value)
 
+    if ingredient_ids is not None:
+        _sync_supplier_ingredients(db_session, supplier.id, list(ingredient_ids))
+
     db_session.add(supplier)
     db_session.commit()
     db_session.refresh(supplier)
-    return supplier
+    return _supplier_out(db_session, supplier)
 
 
 @router.post("/waiters", response_model=schemas.WaiterOut, status_code=201)

@@ -13,6 +13,7 @@ type OrderItemCreate = {
 type OrderCreateBody = {
   table_id?: number;
   service_total?: number | string;
+  waiter_id?: number | null;
   items?: OrderItemCreate[];
 };
 
@@ -117,6 +118,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         table_id,
         service_total: body.service_total ?? 0,
+        waiter_id: body.waiter_id ?? null,
         items: body.items,
       }),
     });

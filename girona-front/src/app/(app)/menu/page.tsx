@@ -35,7 +35,9 @@ async function getMenuItems() {
 }
 
 export default async function MenuPage() {
-  const items = await getMenuItems().catch(() => []);
+  // No silenciar errores como []: eso reemplaza el estado del cliente y parece que
+  // "desapareció" el menú o ítems recién creados tras un refresh fallido.
+  const items = await getMenuItems();
   return (
     <>
       <Breadcrumb pageName="Menu" />

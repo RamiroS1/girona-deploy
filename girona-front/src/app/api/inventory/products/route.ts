@@ -57,8 +57,10 @@ export async function GET(request: Request) {
 
   const kind = requestUrl.searchParams.get("kind");
   const active = requestUrl.searchParams.get("active");
+  const sort = requestUrl.searchParams.get("sort");
   if (kind) backendUrl.searchParams.set("kind", kind);
   if (active) backendUrl.searchParams.set("active", active);
+  if (sort) backendUrl.searchParams.set("sort", sort);
 
   let response: Response;
   try {

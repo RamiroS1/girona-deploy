@@ -9,10 +9,11 @@ import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
 import jsPDF from "jspdf";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FaRegTrashAlt } from "react-icons/fa";
 import { HiOutlineCash } from "react-icons/hi";
-import { RiProhibited2Line } from "react-icons/ri";
+import { RiDrinks2Fill, RiProhibited2Line, RiRestaurantLine } from "react-icons/ri";
+import { getPosCategoryIcon } from "@/lib/pos-menu-category-icons";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -131,6 +132,7 @@ type PosOrderOut = {
   id: number;
   table_id: number;
   waiter_id?: number | null;
+  waiter_name?: string | null;
   sale_id?: number | null;
   status: string;
   electronic_invoice_status?: string | null;
@@ -194,6 +196,18 @@ function parseCopAmount(value: string) {
   const parsed = Number.parseFloat(normalized);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, parsed);
+}
+
+/** Precio de venta en COP. Los ítems en 0 se usan solo como receta (costo); no se venden en POS. */
+function menuItemSellPriceCop(price: string | number | null | undefined): number {
+  if (typeof price === "number" && Number.isFinite(price)) {
+    return Math.max(0, price);
+  }
+  return parseCopAmount(String(price ?? ""));
+}
+
+function isPosOrderableMenuItem(item: MenuItem): boolean {
+  return menuItemSellPriceCop(item.price) > 0;
 }
 
 const BAR_CATEGORY_KEYS = new Set(
@@ -498,6 +512,7 @@ function buildPreFacturaPdf(
 // Modal para ver pedido existente
 function ViewOrderModal({
   order,
+  waiterDisplayName,
   onClose,
   canAddToOrder,
   onAddToOrder,
@@ -508,6 +523,7 @@ function ViewOrderModal({
   deleteSuccessMessage,
 }: {
   order: PosOrderOut | null;
+  waiterDisplayName?: string | null;
   onClose: () => void;
   canAddToOrder: boolean;
   onAddToOrder: (order: PosOrderOut) => void;
@@ -520,6 +536,7 @@ function ViewOrderModal({
   if (!order) return null;
   const zoneLabel = (zone: string) => (zone === "bar" ? "Bar" : "Restaurante");
   const status = orderStatusMeta(order.status);
+  const waiterTitle = (waiterDisplayName ?? order.waiter_name ?? "").trim();
   return (
     <div
       className="fixed inset-0 z-99 flex items-center justify-center bg-black/60 p-4 opacity-0 animate-[fadeIn_160ms_ease-out_forwards]"
@@ -535,6 +552,12 @@ function ViewOrderModal({
           <div>
             <h3 className="text-base font-semibold text-dark dark:text-white">
               Pedido #{order.id}
+              {waiterTitle ? (
+                <span className="font-medium text-body-color dark:text-dark-6">
+                  {" "}
+                  · {waiterTitle}
+                </span>
+              ) : null}
             </h3>
             <p className="text-xs text-body-color dark:text-dark-6">
               Mesa: {order.table_id} · Estado: {status.label}
@@ -718,8 +741,20 @@ export default function PosScreen() {
     | { kind: "success"; message: string }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
-
+  const [newOrderWaiterId, setNewOrderWaiterId] = useState("");
   const cartItems = useMemo(() => Object.values(cart), [cart]);
+  const resolveWaiterName = useCallback(
+    (order: PosOrderOut | null | undefined) => {
+      if (!order) return null;
+      const label = order.waiter_name?.trim();
+      if (label) return label;
+      const id = order.waiter_id;
+      if (id == null) return null;
+      const w = waiterList.find((x) => x.id === id);
+      return w?.name?.trim() || null;
+    },
+    [waiterList],
+  );
   const cartTotals = useMemo(() => {
     let subtotal = 0;
     let tax = 0;
@@ -847,7 +882,10 @@ export default function PosScreen() {
     doc.save(`pedido-${order.id}.pdf`);
   }
 
-  async function handleMarkOrderDelivered(orderId: number, waiterId: number) {
+  async function handleMarkOrderDelivered(
+    orderId: number,
+    waiterId: number | null,
+  ): Promise<PosOrderOut | null> {
     try {
       setWaiterStatus({ kind: "loading" });
       const res = await fetch(`/api/pos/orders/${orderId}/deliver`, {
@@ -864,19 +902,18 @@ export default function PosScreen() {
             (typeof responsePayload?.detail === "string" && responsePayload.detail) ||
             "No se pudo marcar el pedido como entregado.",
         });
-        return false;
+        return null;
       }
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? (responsePayload as PosOrderOut) : o)),
-      );
+      const updated = responsePayload as PosOrderOut;
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
       setWaiterStatus({ kind: "success", message: "Pedido entregado." });
-      return true;
+      return updated;
     } catch {
       setWaiterStatus({
         kind: "error",
         message: "Error marcando el pedido como entregado.",
       });
-      return false;
+      return null;
     }
   }
 
@@ -1165,15 +1202,36 @@ export default function PosScreen() {
     }
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/personnel/waiters?active=true", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled || !Array.isArray(data)) return;
+        setWaiterList(data as Waiter[]);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function handleWaiterDelivery() {
     if (!waiterOrder) return;
-    const parsedId = Number(selectedWaiterId);
-    if (!Number.isFinite(parsedId) || parsedId <= 0) {
-      setWaiterStatus({ kind: "error", message: "Selecciona un mesero." });
-      return;
+    const hasWaiterOnOrder = waiterOrder.waiter_id != null;
+    let waiterId: number | null = null;
+    if (!hasWaiterOnOrder) {
+      const parsedId = Number(selectedWaiterId);
+      if (!Number.isFinite(parsedId) || parsedId <= 0) {
+        setWaiterStatus({ kind: "error", message: "Selecciona un mesero." });
+        return;
+      }
+      waiterId = parsedId;
     }
-    const ok = await handleMarkOrderDelivered(waiterOrder.id, parsedId);
-    if (ok) closeWaiterModal();
+    const updated = await handleMarkOrderDelivered(waiterOrder.id, waiterId);
+    if (!updated) return;
+    closeWaiterModal();
+    openPaymentModal(updated);
   }
 
   function resetPaymentForm() {
@@ -1410,6 +1468,7 @@ export default function PosScreen() {
   const groupedBar = useMemo(() => {
     const groups = new Map<string, MenuItem[]>();
     for (const item of menuItems) {
+      if (!isPosOrderableMenuItem(item)) continue;
       const key = categoryKey(item.category);
       if (!BAR_CATEGORY_KEYS.has(key)) continue;
       const list = groups.get(item.category) ?? [];
@@ -1422,6 +1481,7 @@ export default function PosScreen() {
   const groupedRest = useMemo(() => {
     const groups = new Map<string, MenuItem[]>();
     for (const item of menuItems) {
+      if (!isPosOrderableMenuItem(item)) continue;
       const key = categoryKey(item.category);
       if (BAR_CATEGORY_KEYS.has(key)) continue;
       const list = groups.get(item.category) ?? [];
@@ -1474,10 +1534,11 @@ export default function PosScreen() {
 
   function addToCart(item: MenuItem) {
     if (mode !== "create") return;
+    if (!isPosOrderableMenuItem(item)) return;
     setCart((prev) => {
       const existing = prev[item.id];
       const nextQty = existing ? existing.quantity + 1 : 1;
-      const unitPrice = Number(item.price) || 0;
+      const unitPrice = menuItemSellPriceCop(item.price);
       return {
         ...prev,
         [item.id]: {
@@ -1549,6 +1610,18 @@ export default function PosScreen() {
       return;
     }
 
+    const isAppending = Boolean(appendingOrderId);
+    if (!isAppending) {
+      const wid = Number(newOrderWaiterId);
+      if (!Number.isFinite(wid) || wid <= 0) {
+        setSubmitStatus({
+          kind: "error",
+          message: "Selecciona el mesero que toma el pedido.",
+        });
+        return;
+      }
+    }
+
     setSubmitStatus({ kind: "loading" });
     try {
       const payloadBody = {
@@ -1566,7 +1639,6 @@ export default function PosScreen() {
           };
         }),
       };
-      const isAppending = Boolean(appendingOrderId);
       const res = await fetch(
         isAppending ? `/api/pos/orders/${appendingOrderId}/items` : "/api/pos/orders",
         {
@@ -1578,6 +1650,7 @@ export default function PosScreen() {
               : {
                   table_id: selectedTableId,
                   service_total: 0,
+                  waiter_id: Number(newOrderWaiterId),
                   ...payloadBody,
                 },
           ),
@@ -1745,6 +1818,7 @@ export default function PosScreen() {
                         setMode("create");
                         setAppendingOrderId(null);
                         setCart({});
+                        setNewOrderWaiterId("");
                       }}
                       className="rounded-lg bg-primary px-2 py-1 text-xs font-semibold text-white hover:bg-primary/90"
                     >
@@ -1752,6 +1826,11 @@ export default function PosScreen() {
                     </button>
                   ) : null}
                 </div>
+                {latestOrder && resolveWaiterName(latestOrder) ? (
+                  <div className="mb-1 text-center text-[10px] font-medium leading-tight text-white/95">
+                    Mesero: {resolveWaiterName(latestOrder)}
+                  </div>
+                ) : null}
                 <div className="text-center text-sm font-semibold">{table.name}</div>
               </div>
               </div>
@@ -1814,6 +1893,11 @@ export default function PosScreen() {
                   <TableRow key={order.id} className="border-[#eee] dark:border-dark-3">
                     <TableCell className="min-w-[200px] xl:pl-7.5">
                       <h5 className="text-dark dark:text-white">Pedido #{order.id}</h5>
+                      {resolveWaiterName(order) ? (
+                        <p className="mt-[2px] text-body-sm font-medium text-dark-6 dark:text-dark-6">
+                          Mesero: {resolveWaiterName(order)}
+                        </p>
+                      ) : null}
                       <p className="mt-[3px] text-body-sm font-medium text-dark-6 dark:text-dark-6">
                         Mesa: {getTableName(order.table_id)} · Total: {formatMoney(order.total)}
                       </p>
@@ -1984,6 +2068,11 @@ export default function PosScreen() {
                   <TableRow key={order.id} className="border-[#eee] dark:border-dark-3">
                     <TableCell className="min-w-[200px] xl:pl-7.5">
                       <h5 className="text-dark dark:text-white">Pedido #{order.id}</h5>
+                      {resolveWaiterName(order) ? (
+                        <p className="mt-[2px] text-body-sm font-medium text-dark-6 dark:text-dark-6">
+                          Mesero: {resolveWaiterName(order)}
+                        </p>
+                      ) : null}
                       <p className="mt-[3px] text-body-sm font-medium text-dark-6 dark:text-dark-6">
                         Mesa: {getTableName(order.table_id)} · Total: {formatMoney(order.total)}
                       </p>
@@ -2065,10 +2154,14 @@ export default function PosScreen() {
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h3 className="text-lg font-semibold text-dark dark:text-white">
-                  Asignar mesero
+                  {waiterOrder.waiter_id != null ? "Marcar entrega" : "Asignar mesero"}
                 </h3>
                 <p className="text-sm text-body-color dark:text-dark-6">
                   Pedido #{waiterOrder.id} · Mesa {getTableName(waiterOrder.table_id)}
+                  {resolveWaiterName(waiterOrder) ? ` · ${resolveWaiterName(waiterOrder)}` : ""}
+                </p>
+                <p className="mt-2 text-xs text-body-color dark:text-dark-6">
+                  Al continuar se marca la entrega y se abre el cobro y facturación.
                 </p>
               </div>
               <button
@@ -2081,24 +2174,26 @@ export default function PosScreen() {
             </div>
 
             <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
-                  Selecciona mesero
-                </label>
-                <select
-                  value={selectedWaiterId}
-                  onChange={(e) => setSelectedWaiterId(e.target.value)}
-                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
-                  disabled={loadingWaiters}
-                >
-                  <option value="">Seleccionar mesero</option>
-                  {waiterList.map((waiter) => (
-                    <option key={waiter.id} value={String(waiter.id)}>
-                      {waiter.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {waiterOrder.waiter_id == null ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                    Selecciona mesero
+                  </label>
+                  <select
+                    value={selectedWaiterId}
+                    onChange={(e) => setSelectedWaiterId(e.target.value)}
+                    className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                    disabled={loadingWaiters}
+                  >
+                    <option value="">Seleccionar mesero</option>
+                    {waiterList.map((waiter) => (
+                      <option key={waiter.id} value={String(waiter.id)}>
+                        {waiter.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
               <div className="flex flex-wrap justify-between gap-2">
                 <button
                   type="button"
@@ -2113,7 +2208,7 @@ export default function PosScreen() {
                   disabled={waiterStatus.kind === "loading"}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 disabled:opacity-60"
                 >
-                  {waiterStatus.kind === "loading" ? "Guardando..." : "Guardar entrega"}
+                  {waiterStatus.kind === "loading" ? "Guardando..." : "Continuar al pago"}
                 </button>
               </div>
             </div>
@@ -2503,6 +2598,7 @@ export default function PosScreen() {
             setAppendingOrderId(null);
             setCart({});
             setNoteInput("");
+            setNewOrderWaiterId("");
           }}
         >
           <div
@@ -2530,6 +2626,7 @@ export default function PosScreen() {
                     setAppendingOrderId(null);
                     setCart({});
                     setNoteInput("");
+                    setNewOrderWaiterId("");
                   }}
                   className="rounded-lg border border-stroke px-3 py-1.5 text-sm font-semibold text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
                 >
@@ -2537,30 +2634,57 @@ export default function PosScreen() {
                 </button>
               </div>
 
+              {!appendingBaseOrder ? (
+                <div className="mt-3 max-w-md">
+                  <label className="block text-xs font-medium text-body-color dark:text-dark-6">
+                    Mesero que toma el pedido
+                    <select
+                      value={newOrderWaiterId}
+                      onChange={(e) => setNewOrderWaiterId(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                    >
+                      <option value="">Seleccionar mesero</option>
+                      {waiterList.map((w) => (
+                        <option key={w.id} value={String(w.id)}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : resolveWaiterName(appendingBaseOrder) ? (
+                <p className="mt-3 text-sm text-dark dark:text-white">
+                  <span className="text-body-color dark:text-dark-6">Mesero de la comanda: </span>
+                  <span className="font-semibold">{resolveWaiterName(appendingBaseOrder)}</span>
+                </p>
+              ) : null}
+
               <div className="mt-4 space-y-4">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setMenuTab("rest")}
                     className={
-                      "rounded-xl px-3 py-2 text-sm font-semibold " +
+                      "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold " +
                       (menuTab === "rest"
                         ? "bg-primary text-white"
                         : "bg-gray-1 text-dark hover:bg-gray-2 dark:bg-dark-2 dark:text-white")
                     }
                   >
+                    <RiRestaurantLine className="h-4 w-4 shrink-0" aria-hidden />
                     Restaurante ({restItemCount})
                   </button>
                   <button
                     type="button"
                     onClick={() => setMenuTab("bar")}
                     className={
-                      "rounded-xl px-3 py-2 text-sm font-semibold " +
+                      "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold " +
                       (menuTab === "bar"
-                        ? "bg-primary text-white"
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500"
                         : "bg-gray-1 text-dark hover:bg-gray-2 dark:bg-dark-2 dark:text-white")
                     }
                   >
+                    <RiDrinks2Fill className="h-4 w-4 shrink-0" aria-hidden />
                     Bar ({barItemCount})
                   </button>
                 </div>
@@ -2569,21 +2693,25 @@ export default function PosScreen() {
                   <>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex flex-wrap gap-2">
-                        {groupedRest.map(([cat]) => (
-                          <button
-                            key={cat}
-                            type="button"
-                            onClick={() => setActiveRestCategory(cat)}
-                            className={
-                              "rounded-full px-3 py-1 text-xs font-semibold " +
-                              (activeRestCategory === cat
-                                ? "bg-primary text-white"
-                                : "bg-primary/10 text-primary hover:bg-primary/20")
-                            }
-                          >
-                            {cat}
-                          </button>
-                        ))}
+                        {groupedRest.map(([cat]) => {
+                          const CatIcon = getPosCategoryIcon(cat, "rest");
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setActiveRestCategory(cat)}
+                              className={
+                                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold " +
+                                (activeRestCategory === cat
+                                  ? "bg-primary text-white"
+                                  : "bg-primary/10 text-primary hover:bg-primary/20")
+                              }
+                            >
+                              <CatIcon className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+                              {cat}
+                            </button>
+                          );
+                        })}
                       </div>
                       <div className="relative ml-auto w-full max-w-xs">
                         <input
@@ -2656,30 +2784,34 @@ export default function PosScreen() {
                   <>
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex flex-wrap gap-2">
-                        {groupedBar.map(([cat]) => (
-                          <button
-                            key={cat}
-                            type="button"
-                            onClick={() => setActiveBarCategory(cat)}
-                            className={
-                              "rounded-full px-3 py-1 text-xs font-semibold " +
-                              (activeBarCategory === cat
-                                ? "bg-primary text-white"
-                                : "bg-primary/10 text-primary hover:bg-primary/20")
-                            }
-                          >
-                            {cat}
-                          </button>
-                        ))}
+                        {groupedBar.map(([cat]) => {
+                          const CatIcon = getPosCategoryIcon(cat, "bar");
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setActiveBarCategory(cat)}
+                              className={
+                                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold " +
+                                (activeBarCategory === cat
+                                  ? "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+                                  : "bg-emerald-100 text-emerald-900 hover:bg-emerald-200/90 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/35")
+                              }
+                            >
+                              <CatIcon className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+                              {cat}
+                            </button>
+                          );
+                        })}
                       </div>
                       <div className="relative ml-auto w-full max-w-xs">
                         <input
                           value={barSearch}
                           onChange={(e) => setBarSearch(e.target.value)}
                           placeholder="Buscar en bar..."
-                          className="w-full rounded-lg border-2 border-primary/40 bg-white py-2 pl-11 pr-3 text-sm text-dark shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-dark-3 dark:bg-dark-2 dark:text-white"
+                          className="w-full rounded-lg border-2 border-emerald-500/35 bg-white py-2 pl-11 pr-3 text-sm text-dark shadow-sm outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/25 dark:border-dark-3 dark:bg-dark-2 dark:text-white"
                         />
-                        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-primary" />
+                        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-emerald-600 dark:text-emerald-400" />
                       </div>
                     </div>
                     <div className="space-y-3">
@@ -2972,6 +3104,7 @@ export default function PosScreen() {
 
       <ViewOrderModal
         order={viewOrder}
+        waiterDisplayName={viewOrder ? resolveWaiterName(viewOrder) : null}
         onClose={() => {
           setViewOrder(null);
           setViewDeleteSuccessMessage(null);

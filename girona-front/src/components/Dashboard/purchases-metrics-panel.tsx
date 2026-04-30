@@ -17,7 +17,14 @@ export type PurchaseRecord = {
   total_cost: number | string;
   created_at: string;
   supplier_id?: number | null;
-  items?: { id: number; product_name?: string | null; line_total?: string | number }[];
+  supplier_name?: string | null;
+  items?: {
+    id: number;
+    product_id?: number | null;
+    is_other_expense?: boolean;
+    product_name?: string | null;
+    line_total?: string | number;
+  }[];
 };
 
 function safeNumber(value: unknown) {
@@ -35,14 +42,6 @@ function formatMoney(value: unknown) {
   }).format(num);
 }
 
-function formatQty(value: unknown) {
-  const num = safeNumber(value);
-  return new Intl.NumberFormat("es-CO", {
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0,
-  }).format(num);
-}
-
 function parseDate(value: string | null | undefined) {
   if (!value) return null;
   const withOffset = /([zZ]|[+-]\d{2}:?\d{2})$/.test(value);
@@ -52,6 +51,40 @@ function parseDate(value: string | null | undefined) {
 
 function isOnOrAfter(date: dayjs.Dayjs, reference: dayjs.Dayjs) {
   return date.isAfter(reference) || date.isSame(reference);
+}
+
+function lineProductLabel(item: {
+  product_id?: number | null;
+  product_name?: string | null;
+}) {
+  const name = (item.product_name ?? "").trim();
+  if (name) return name;
+  if (item.product_id != null) return `#${item.product_id}`;
+  return "—";
+}
+
+function purchaseProductFullList(p: PurchaseRecord) {
+  const items = p.items ?? [];
+  if (items.length === 0) return "";
+  return items.map((i) => lineProductLabel(i)).join(", ");
+}
+
+function purchaseProductSummary(p: PurchaseRecord) {
+  const items = p.items ?? [];
+  if (items.length === 0) return "—";
+  const labels = items.map((i) => lineProductLabel(i));
+  if (labels.length === 1) return labels[0];
+  const first = labels[0] ?? "—";
+  if (first === "—" && labels.every((l) => l === "—")) return "—";
+  const extra = items.length - 1;
+  return `${first} · +${extra} ${extra === 1 ? "línea" : "líneas"}`;
+}
+
+function purchaseSupplierLabel(p: PurchaseRecord) {
+  const n = p.supplier_name?.trim();
+  if (n) return n;
+  if (p.supplier_id != null) return `Proveedor #${p.supplier_id}`;
+  return "—";
 }
 
 type Props = {
@@ -132,7 +165,6 @@ export default function PurchasesMetricsPanel({ purchases, loading }: Props) {
     (acc, purchase) => acc + safeNumber(purchase.total_cost),
     0,
   );
-  const totalPurchaseRecords = purchases.length;
 
   return (
     <div className="rounded-sm border border-stroke border-l-4 border-l-secondary bg-white p-6 shadow-default dark:border-dark-3 dark:border-l-secondary dark:bg-gray-dark">
@@ -148,7 +180,7 @@ export default function PurchasesMetricsPanel({ purchases, loading }: Props) {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            href="/inventory"
+            href="/personnel?tab=proveedores"
             className="rounded-md border border-stroke bg-white px-3 py-2 text-sm font-medium text-dark transition hover:bg-gray-2 dark:border-dark-3 dark:bg-dark-2 dark:text-white dark:hover:bg-dark-3"
           >
             Registrar compra
@@ -162,7 +194,7 @@ export default function PurchasesMetricsPanel({ purchases, loading }: Props) {
         </div>
       </div>
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-md border border-stroke bg-gray-1 px-4 py-3 dark:border-dark-3 dark:bg-white/5">
           <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Egresos hoy</p>
           <p className="mt-1 text-lg font-semibold text-black dark:text-white">
@@ -187,13 +219,6 @@ export default function PurchasesMetricsPanel({ purchases, loading }: Props) {
             {formatMoney(totalExpenses30Days)}
           </p>
           <p className="text-xs text-body-color dark:text-dark-6">Mismo criterio que ingresos (30 días)</p>
-        </div>
-        <div className="rounded-md border border-stroke bg-gray-1 px-4 py-3 dark:border-dark-3 dark:bg-white/5">
-          <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Total registros</p>
-          <p className="mt-1 text-lg font-semibold text-black dark:text-white">
-            {formatQty(totalPurchaseRecords)}
-          </p>
-          <p className="text-xs text-body-color dark:text-dark-6">Compras en histórico</p>
         </div>
       </div>
 
@@ -254,6 +279,8 @@ export default function PurchasesMetricsPanel({ purchases, loading }: Props) {
                 <TableRow className="bg-secondary/10 text-secondary hover:bg-secondary/10 dark:hover:bg-secondary/10">
                   <TableHead>Fecha</TableHead>
                   <TableHead>ID</TableHead>
+                  <TableHead>Producto</TableHead>
+                  <TableHead>Proveedor</TableHead>
                   <TableHead>Líneas</TableHead>
                   <TableHead className="text-right">Total (egreso)</TableHead>
                 </TableRow>
@@ -268,6 +295,15 @@ export default function PurchasesMetricsPanel({ purchases, loading }: Props) {
                         {when ? when.format("DD/MM/YYYY HH:mm") : "-"}
                       </TableCell>
                       <TableCell className="font-medium text-black dark:text-white">#{row.id}</TableCell>
+                      <TableCell
+                        className="max-w-[200px] text-body-color dark:text-dark-6"
+                        title={purchaseProductFullList(row)}
+                      >
+                        {purchaseProductSummary(row)}
+                      </TableCell>
+                      <TableCell className="max-w-[180px] text-body-color dark:text-dark-6">
+                        {purchaseSupplierLabel(row)}
+                      </TableCell>
                       <TableCell>{row.items?.length ?? 0}</TableCell>
                       <TableCell className="text-right font-semibold text-black dark:text-white">
                         {formatMoney(row.total_cost)}

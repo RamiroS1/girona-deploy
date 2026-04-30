@@ -2,26 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { IconType } from "react-icons";
-import { BiSolidDrink, BiSolidDish } from "react-icons/bi";
-import { FaBitbucket, FaWineBottle } from "react-icons/fa";
-import {
-  FaBowlFood,
-  FaChild,
-  FaGlassWater,
-  FaHotdog,
-  FaIceCream,
-  FaStroopwafel,
-} from "react-icons/fa6";
-import { GiCutLemon, GiJug, GiMeat, GiSodaCan } from "react-icons/gi";
-import { LiaWineGlassAltSolid } from "react-icons/lia";
-import { LuCupSoda, LuEggFried } from "react-icons/lu";
-import { MdOutlineFoodBank } from "react-icons/md";
-import {
-  PiBeerBottleBold,
-  PiBowlFoodFill,
-  PiHamburgerBold,
-  PiLeaf,
-} from "react-icons/pi";
 import {
   RiDeleteBinLine,
   RiDrinks2Fill,
@@ -30,6 +10,11 @@ import {
 } from "react-icons/ri";
 import { Tooltip } from "@/components/ui/tooltip";
 import { SearchIcon } from "@/assets/icons";
+import {
+  BAR_CATEGORY_ICONS as BAR_NAV,
+  getPosCategoryIcon,
+  RESTAURANTE_CATEGORY_ICONS as RESTAURANTE_NAV,
+} from "@/lib/pos-menu-category-icons";
 
 type MenuItem = {
   id: number;
@@ -189,6 +174,26 @@ function getIngredientNames(ingredients: MenuItem["ingredients"]) {
     .filter(Boolean);
 }
 
+/** Acentos y mayúsculas no afectan la búsqueda (ej. LIMONADA ≈ limonada). */
+function normalizeForMenuSearch(value: string): string {
+  return value
+    .normalize("NFKC")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function menuItemSearchHaystack(item: MenuItem): string {
+  const parts = [
+    String(item.name ?? ""),
+    String(item.category ?? ""),
+    String(item.description ?? ""),
+    ...getIngredientNames(item.ingredients),
+  ];
+  return normalizeForMenuSearch(parts.join(" "));
+}
+
 function normalizeRecipeDraft(ingredients: MenuItem["ingredients"]) {
   if (!Array.isArray(ingredients) || ingredients.length === 0) {
     return [{ name: "", unit: "", weight: "", price: "" }];
@@ -212,6 +217,8 @@ function normalizeRecipeDraft(ingredients: MenuItem["ingredients"]) {
 const DEFAULT_BAR_CATEGORIES = new Set(
   [
     "Bebidas",
+    "Malteadas",
+    "Dulces bar",
     "Sodas",
     "Gaseosas",
     "Para el Almuerzo",
@@ -228,39 +235,8 @@ const DEFAULT_BAR_CATEGORIES = new Set(
 const STORAGE_KEY_BAR_CATEGORIES = "girona.menu.customBarCategories";
 const STORAGE_KEY_RESTAURANTE_CATEGORIES = "girona.menu.customRestauranteCategories";
 
-const RESTAURANTE_NAV = [
-  { label: "Almuerzos", Icon: FaBowlFood },
-  { label: "Antojitos de la casa", Icon: MdOutlineFoodBank },
-  { label: "Burguers", Icon: PiHamburgerBold },
-  { label: "Desayunos", Icon: LuEggFried },
-  { label: "Dogs", Icon: FaHotdog },
-  { label: "Entradas", Icon: RiRestaurantLine },
-  { label: "Ensaladas", Icon: PiLeaf },
-  { label: "Menu infantil", Icon: FaChild },
-  { label: "para Tardear", Icon: FaStroopwafel },
-  { label: "Platos fuertes", Icon: GiMeat },
-  { label: "Platos especiales", Icon: BiSolidDish },
-  { label: "Postres", Icon: FaIceCream },
-] as const;
-
-const BAR_NAV = [
-  { label: "Bebidas", Icon: RiDrinks2Fill },
-  { label: "Cervezas nacionales", Icon: PiBeerBottleBold },
-  { label: "Cocteleria", Icon: LiaWineGlassAltSolid },
-  { label: "Cubetazos", Icon: FaBitbucket },
-  { label: "Gaseosas", Icon: LuCupSoda },
-  { label: "Licores y shots", Icon: BiSolidDrink },
-  { label: "Micheladas", Icon: GiCutLemon },
-  { label: "Para el almuerzo", Icon: GiJug },
-  { label: "Sodas", Icon: GiSodaCan },
-  { label: "Vinos", Icon: FaWineBottle },
-] as const;
-
 function getCategoryNavIcon(label: string, tab: "restaurante" | "bar"): IconType {
-  const nav = tab === "bar" ? BAR_NAV : RESTAURANTE_NAV;
-  const k = categoryKey(label);
-  const found = nav.find((n) => categoryKey(n.label) === k);
-  return found ? found.Icon : tab === "bar" ? FaGlassWater : PiBowlFoodFill;
+  return getPosCategoryIcon(label, tab === "bar" ? "bar" : "rest");
 }
 
 export default function Menu({ items }: { items: MenuItem[] }) {
@@ -481,13 +457,11 @@ export default function Menu({ items }: { items: MenuItem[] }) {
 
   const activeItems = tab === "bar" ? barItems : restauranteItems;
   const filteredItems = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+    const queryRaw = searchQuery.trim();
+    if (!queryRaw) return activeItems;
+    const query = normalizeForMenuSearch(queryRaw);
     if (!query) return activeItems;
-    return activeItems.filter((item) => {
-      const name = item.name?.toLowerCase() ?? "";
-      const category = item.category?.toLowerCase() ?? "";
-      return name.includes(query) || category.includes(query);
-    });
+    return activeItems.filter((item) => menuItemSearchHaystack(item).includes(query));
   }, [activeItems, searchQuery]);
 
   const grouped = useMemo(() => {

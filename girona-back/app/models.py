@@ -9,6 +9,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -57,6 +58,7 @@ class InventoryProduct(Base):
     movements = relationship("StockMovement", back_populates="product")
     purchase_items = relationship("PurchaseItem", back_populates="product")
     recipe_items = relationship("RecipeItem", back_populates="product")
+    supplier_links = relationship("SupplierIngredient", back_populates="product")
 
 
 class StockMovement(Base):
@@ -88,6 +90,30 @@ class Supplier(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     purchases = relationship("Purchase", back_populates="supplier")
+    ingredient_links = relationship(
+        "SupplierIngredient", back_populates="supplier", cascade="all, delete-orphan"
+    )
+
+
+class SupplierIngredient(Base):
+    __tablename__ = "supplier_ingredients"
+    __table_args__ = (
+        UniqueConstraint("supplier_id", "product_id", name="uq_supplier_ingredient"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    supplier_id = Column(
+        Integer, ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    product_id = Column(
+        Integer,
+        ForeignKey("inventory_products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    supplier = relationship("Supplier", back_populates="ingredient_links")
+    product = relationship("InventoryProduct", back_populates="supplier_links")
 
 
 class Purchase(Base):
@@ -110,7 +136,9 @@ class PurchaseItem(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id"), index=True, nullable=False)
-    product_id = Column(Integer, ForeignKey("inventory_products.id"), index=True, nullable=False)
+    product_id = Column(Integer, ForeignKey("inventory_products.id"), index=True, nullable=True)
+    # Texto de línea "Otros" (gasto / compra que no afecta inventario); si hay producto, queda en null
+    other_label = Column(String(200), nullable=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), index=True, nullable=True)
     quantity = Column(Numeric(14, 4), nullable=False)
     unit_cost = Column(Numeric(14, 4), nullable=False)
@@ -118,9 +146,12 @@ class PurchaseItem(Base):
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("InventoryProduct", back_populates="purchase_items")
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
 
     @property
     def product_name(self) -> str | None:
+        if (self.other_label or "").strip():
+            return (self.other_label or "").strip()
         return self.product.name if self.product else None
 
 
@@ -229,6 +260,12 @@ class PosOrder(Base):
         if not self.sale or not self.sale.electronic_invoice:
             return None
         return self.sale.electronic_invoice.factus_bill_number
+
+    @property
+    def waiter_name(self) -> str | None:
+        if not self.waiter:
+            return None
+        return self.waiter.name
 
 
 class PosOrderItem(Base):

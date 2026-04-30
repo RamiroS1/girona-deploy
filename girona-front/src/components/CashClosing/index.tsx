@@ -5,6 +5,7 @@ import Link from "next/link";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
+import jsPDF from "jspdf";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 dayjs.extend(utc);
@@ -23,8 +24,6 @@ type SaleRow = {
   created_at: string;
   payment_method?: string | null;
 };
-
-const TARJETA_CODES = new Set(["tarjeta", "tarjeta_credito", "tarjeta_debito"]);
 
 type PurchaseRow = {
   id: number;
@@ -60,26 +59,42 @@ function purchaseOnDate(p: PurchaseRow, ymd: string) {
 type Draft = {
   opening: string;
   cashIn: string;
+  cardCreditIn: string;
+  cardDebitIn: string;
+  transferIn: string;
   counted: string;
   note: string;
 };
 
+const EMPTY_DRAFT: Draft = {
+  opening: "",
+  cashIn: "",
+  cardCreditIn: "",
+  cardDebitIn: "",
+  transferIn: "",
+  counted: "",
+  note: "",
+};
+
 function loadDraft(ymd: string): Draft {
   if (typeof window === "undefined") {
-    return { opening: "", cashIn: "", counted: "", note: "" };
+    return { ...EMPTY_DRAFT };
   }
   try {
     const raw = window.localStorage.getItem(`${LS_PREFIX}${ymd}`);
-    if (!raw) return { opening: "", cashIn: "", counted: "", note: "" };
+    if (!raw) return { ...EMPTY_DRAFT };
     const p = JSON.parse(raw) as Partial<Draft>;
     return {
       opening: String(p.opening ?? ""),
       cashIn: String(p.cashIn ?? ""),
+      cardCreditIn: String(p.cardCreditIn ?? ""),
+      cardDebitIn: String(p.cardDebitIn ?? ""),
+      transferIn: String(p.transferIn ?? ""),
       counted: String(p.counted ?? ""),
       note: String(p.note ?? ""),
     };
   } catch {
-    return { opening: "", cashIn: "", counted: "", note: "" };
+    return { ...EMPTY_DRAFT };
   }
 }
 
@@ -106,6 +121,199 @@ function paymentLabel(code: string | null | undefined) {
   return map[c] ?? code;
 }
 
+/** jsPDF default font is Latin-1; evita acentos rotos. */
+function pdfText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function ensurePageSpace(doc: jsPDF, y: number, minBottom: number, margin: number) {
+  const pageH = doc.internal.pageSize.getHeight();
+  if (y > pageH - minBottom) {
+    doc.addPage();
+    return margin + 6;
+  }
+  return y;
+}
+
+type CashClosingMetrics = {
+  n: number;
+  totalVentas: number;
+  totalPropinas: number;
+  totalCortesias: number;
+  egresosCompras: number;
+  totalTarjetaCredito: number;
+  totalTarjetaDebito: number;
+  totalTarjetaSinTipo: number;
+  totalTransferencias: number;
+};
+
+type CashClosingPdfInput = {
+  dateYmd: string;
+  metrics: CashClosingMetrics;
+  draft: Draft;
+  esperadoEfectivo: number;
+  diferencia: number;
+  sales: SaleRow[];
+  purchasesDay: PurchaseRow[];
+};
+
+function buildCashClosingPdf(input: CashClosingPdfInput) {
+  const {
+    dateYmd,
+    metrics,
+    draft,
+    esperadoEfectivo,
+    diferencia,
+    sales,
+    purchasesDay,
+  } = input;
+
+  const doc = new jsPDF({ format: "a4", unit: "mm" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 14;
+  let y = 16;
+
+  const fechaLabel = dayjs(dateYmd).tz(COLOMBIA_TZ).format("DD/MM/YYYY");
+
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text(pdfText("Cierre de caja"), margin, y);
+  y += 9;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text(pdfText(`Fecha de cierre: ${fechaLabel}`), margin, y);
+  y += 5;
+  doc.text(
+    pdfText(
+      `Generado: ${new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" })}`,
+    ),
+    margin,
+    y,
+  );
+  y += 10;
+
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text(pdfText("Resumen del dia (sistema)"), margin, y);
+  y += 7;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const linesResumen = [
+    `Ventas: ${formatMoney(metrics.totalVentas)} (${metrics.n} transaccion(es))`,
+    `Propinas / servicio: ${formatMoney(metrics.totalPropinas)}`,
+    `Tarjeta credito: ${formatMoney(metrics.totalTarjetaCredito)}`,
+    `Tarjeta debito: ${formatMoney(metrics.totalTarjetaDebito)}`,
+    `Transferencias: ${formatMoney(metrics.totalTransferencias)}`,
+    `Cortesias: ${formatMoney(metrics.totalCortesias)}`,
+    `Compras / egresos: ${formatMoney(metrics.egresosCompras)} (${purchasesDay.length} registro(s))`,
+    `Ingresos - egresos (referencia): ${formatMoney(metrics.totalVentas - metrics.egresosCompras)}`,
+  ];
+  if (metrics.totalTarjetaSinTipo > 0) {
+    linesResumen.push(
+      `Tarjeta sin tipo: ${formatMoney(metrics.totalTarjetaSinTipo)}`,
+    );
+  }
+  for (const line of linesResumen) {
+    y = ensurePageSpace(doc, y, 24, margin);
+    doc.text(pdfText(line), margin, y);
+    y += 5;
+  }
+
+  y += 4;
+  y = ensurePageSpace(doc, y, 40, margin);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text(pdfText("Arqueo y registros manuales"), margin, y);
+  y += 7;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const manual = [
+    `Fondo de apertura: ${formatMoney(draft.opening)}`,
+    `Ingresos en efectivo (estimado): ${formatMoney(draft.cashIn)}`,
+    `Ingresos tarjeta credito (manual): ${formatMoney(draft.cardCreditIn)}`,
+    `Ingresos tarjeta debito (manual): ${formatMoney(draft.cardDebitIn)}`,
+    `Ingresos transferencia (manual): ${formatMoney(draft.transferIn)}`,
+    `Efectivo contado al cierre: ${formatMoney(draft.counted)}`,
+    `Efectivo esperado (apertura + efectivo estimado): ${formatMoney(esperadoEfectivo)}`,
+    `Diferencia (contado - esperado): ${formatMoney(diferencia)}`,
+  ];
+  for (const line of manual) {
+    y = ensurePageSpace(doc, y, 24, margin);
+    doc.text(pdfText(line), margin, y);
+    y += 5;
+  }
+
+  const note = (draft.note ?? "").trim();
+  if (note) {
+    y += 3;
+    y = ensurePageSpace(doc, y, 32, margin);
+    doc.setFont("helvetica", "bold");
+    doc.text(pdfText("Notas del cierre"), margin, y);
+    y += 5;
+    doc.setFont("helvetica", "normal");
+    const wrapped = doc.splitTextToSize(pdfText(note), pageW - margin * 2);
+    for (const piece of wrapped) {
+      y = ensurePageSpace(doc, y, 20, margin);
+      doc.text(piece, margin, y);
+      y += 4;
+    }
+  }
+
+  y += 6;
+  y = ensurePageSpace(doc, y, 30, margin);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text(pdfText("Detalle de ventas del dia"), margin, y);
+  y += 7;
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  if (sales.length === 0) {
+    doc.text(pdfText("Sin ventas para esta fecha."), margin, y);
+    y += 6;
+  } else {
+    for (const s of sales) {
+      y = ensurePageSpace(doc, y, 14, margin);
+      const hora = dayjs(s.created_at).tz(COLOMBIA_TZ).format("DD/MM/YYYY HH:mm");
+      const medio = paymentLabel(s.payment_method);
+      const row = `#${s.id}  ${hora}  ${medio}  ${formatMoney(s.total)}`;
+      const parts = doc.splitTextToSize(pdfText(row), pageW - margin * 2);
+      for (const piece of parts) {
+        doc.text(piece, margin, y);
+        y += 4;
+        y = ensurePageSpace(doc, y, 14, margin);
+      }
+      y += 1;
+    }
+  }
+
+  if (purchasesDay.length > 0) {
+    y += 4;
+    y = ensurePageSpace(doc, y, 28, margin);
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text(pdfText("Compras registradas el dia"), margin, y);
+    y += 7;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    for (const p of purchasesDay) {
+      y = ensurePageSpace(doc, y, 12, margin);
+      const hora = p.created_at
+        ? dayjs(p.created_at).tz(COLOMBIA_TZ).format("DD/MM/YYYY HH:mm")
+        : "—";
+      doc.text(
+        pdfText(`Compra #${p.id}  ${hora}  ${formatMoney(p.total_cost)}`),
+        margin,
+        y,
+      );
+      y += 4;
+    }
+  }
+
+  doc.save(pdfText(`cierre-caja-${dateYmd}.pdf`));
+}
+
 export default function CashClosing() {
   const [dateInput, setDateInput] = useState(todayYmd);
   const [dateYmd, setDateYmd] = useState(todayYmd);
@@ -113,7 +321,7 @@ export default function CashClosing() {
   const [purchasesDay, setPurchasesDay] = useState<PurchaseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft>({ opening: "", cashIn: "", counted: "", note: "" });
+  const [draft, setDraft] = useState<Draft>({ ...EMPTY_DRAFT });
 
   useEffect(() => {
     setDraft(loadDraft(dateYmd));
@@ -154,16 +362,21 @@ export default function CashClosing() {
     const n = sales.length;
     const totalVentas = sales.reduce((a, s) => a + safeNumber(s.total), 0);
     const totalPropinas = sales.reduce((a, s) => a + safeNumber(s.service_total), 0);
-    const totalInc = sales.reduce((a, s) => a + safeNumber(s.tax_total), 0);
     const totalCortesias = sales.reduce((a, s) => a + safeNumber(s.courtesy_total), 0);
     const egresosCompras = purchasesDay.reduce((a, p) => a + safeNumber(p.total_cost), 0);
-    let totalTarjetas = 0;
+    let totalTarjetaCredito = 0;
+    let totalTarjetaDebito = 0;
+    let totalTarjetaSinTipo = 0;
     let totalTransferencias = 0;
     for (const s of sales) {
       const code = (s.payment_method ?? "").toLowerCase();
       const t = safeNumber(s.total);
-      if (TARJETA_CODES.has(code)) {
-        totalTarjetas += t;
+      if (code === "tarjeta_credito") {
+        totalTarjetaCredito += t;
+      } else if (code === "tarjeta_debito") {
+        totalTarjetaDebito += t;
+      } else if (code === "tarjeta") {
+        totalTarjetaSinTipo += t;
       } else if (code === "transferencia") {
         totalTransferencias += t;
       }
@@ -172,10 +385,11 @@ export default function CashClosing() {
       n,
       totalVentas,
       totalPropinas,
-      totalInc,
       totalCortesias,
       egresosCompras,
-      totalTarjetas,
+      totalTarjetaCredito,
+      totalTarjetaDebito,
+      totalTarjetaSinTipo,
       totalTransferencias,
     };
   }, [sales, purchasesDay]);
@@ -194,14 +408,31 @@ export default function CashClosing() {
     });
   }
 
+  function handleCloseCashRegister() {
+    const label = dayjs(dateYmd).tz(COLOMBIA_TZ).format("DD/MM/YYYY");
+    const ok = window.confirm(
+      `¿Confirmar cierre de caja para ${label}? Se descargará el PDF del cierre como constancia.`,
+    );
+    if (!ok) return;
+    buildCashClosingPdf({
+      dateYmd,
+      metrics,
+      draft,
+      esperadoEfectivo,
+      diferencia,
+      sales,
+      purchasesDay,
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2 className="text-xl font-semibold text-dark dark:text-white">Cierre de caja</h2>
           <p className="mt-1 text-sm text-body">
-            Referencia con ventas y compras del día (Colombia). Los totales por tarjeta y transferencia usan
-            el medio de pago guardado al cerrar el pedido. El efectivo físico se arquea abajo.
+            Referencia con ventas y compras del día (Colombia). Tarjeta crédito y débito se separan según el
+            medio guardado al cerrar el pedido; transferencias aparte. El efectivo físico se arquea abajo.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -236,9 +467,33 @@ export default function CashClosing() {
           >
             Actualizar
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              buildCashClosingPdf({
+                dateYmd,
+                metrics,
+                draft,
+                esperadoEfectivo,
+                diferencia,
+                sales,
+                purchasesDay,
+              })
+            }
+            className="mt-5 rounded-md border border-stroke bg-white px-4 py-2 text-sm font-medium text-dark shadow-sm hover:bg-gray-2 dark:border-dark-3 dark:bg-gray-dark dark:text-white dark:hover:bg-dark-2"
+          >
+            Descargar PDF del cierre
+          </button>
+          <button
+            type="button"
+            onClick={handleCloseCashRegister}
+            className="mt-5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90"
+          >
+            Cerrar Caja
+          </button>
           <Link
             href="/sales"
-            className="mt-5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary/90"
+            className="mt-5 rounded-md border border-primary bg-transparent px-4 py-2 text-sm font-medium text-primary hover:bg-primary/10"
           >
             Ir a ventas
           </Link>
@@ -257,13 +512,17 @@ export default function CashClosing() {
           <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Propinas / servicio</p>
           <p className="mt-1 text-2xl font-semibold text-dark dark:text-white">{formatMoney(metrics.totalPropinas)}</p>
         </div>
-        <div className="rounded-lg border border-stroke bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
-          <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">INC</p>
-          <p className="mt-1 text-2xl font-semibold text-dark dark:text-white">{formatMoney(metrics.totalInc)}</p>
-        </div>
         <div className="rounded-lg border border-stroke border-l-4 border-l-sky-500 bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
-          <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Tarjetas (día)</p>
-          <p className="mt-1 text-2xl font-semibold text-dark dark:text-white">{formatMoney(metrics.totalTarjetas)}</p>
+          <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Tarjeta crédito (día)</p>
+          <p className="mt-1 text-2xl font-semibold text-dark dark:text-white">
+            {formatMoney(metrics.totalTarjetaCredito)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-stroke border-l-4 border-l-teal-500 bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
+          <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Tarjeta débito (día)</p>
+          <p className="mt-1 text-2xl font-semibold text-dark dark:text-white">
+            {formatMoney(metrics.totalTarjetaDebito)}
+          </p>
         </div>
         <div className="rounded-lg border border-stroke border-l-4 border-l-violet-500 bg-white p-4 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
           <p className="text-xs font-medium uppercase text-body-color dark:text-dark-6">Transferencias (día)</p>
@@ -290,12 +549,24 @@ export default function CashClosing() {
         </div>
       </div>
 
+      {metrics.totalTarjetaSinTipo > 0 ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+          <span className="font-semibold">Tarjeta sin tipo (día): </span>
+          {formatMoney(metrics.totalTarjetaSinTipo)}
+          <span className="text-amber-900/90 dark:text-amber-200/90">
+            {" "}
+            — ventas guardadas solo como «Tarjeta». En POS usá crédito o débito para que aparezcan en las tarjetas
+            correctas.
+          </span>
+        </div>
+      ) : null}
+
       <div className="rounded-lg border border-stroke bg-white p-6 shadow-1 dark:border-dark-3 dark:bg-gray-dark">
         <h3 className="text-lg font-semibold text-dark dark:text-white">Arqueo de efectivo (manual)</h3>
         <p className="mb-4 text-sm text-body">
           Complete solo lo que aplica. Los importes se guardan en este navegador para la fecha elegida.
         </p>
-        <div className="grid max-w-xl gap-4 sm:grid-cols-2">
+        <div className="grid max-w-4xl gap-4 sm:grid-cols-2">
           <label className="text-sm text-dark dark:text-white">
             Fondo de apertura
             <input
@@ -316,6 +587,36 @@ export default function CashClosing() {
               className="mt-1 w-full rounded-md border border-stroke bg-white px-3 py-2 text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
             />
           </label>
+          <label className="text-sm text-dark dark:text-white sm:col-span-2 md:col-span-1">
+            Ingresos en tarjeta crédito (manual)
+            <input
+              value={draft.cardCreditIn}
+              onChange={(e) => updateDraft({ cardCreditIn: e.target.value })}
+              inputMode="decimal"
+              placeholder="0"
+              className="mt-1 w-full rounded-md border border-stroke bg-white px-3 py-2 text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+            />
+          </label>
+          <label className="text-sm text-dark dark:text-white sm:col-span-2 md:col-span-1">
+            Ingresos en tarjeta débito (manual)
+            <input
+              value={draft.cardDebitIn}
+              onChange={(e) => updateDraft({ cardDebitIn: e.target.value })}
+              inputMode="decimal"
+              placeholder="0"
+              className="mt-1 w-full rounded-md border border-stroke bg-white px-3 py-2 text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+            />
+          </label>
+          <label className="text-sm text-dark dark:text-white sm:col-span-2">
+            Ingresos en transferencia (manual)
+            <input
+              value={draft.transferIn}
+              onChange={(e) => updateDraft({ transferIn: e.target.value })}
+              inputMode="decimal"
+              placeholder="0"
+              className="mt-1 w-full rounded-md border border-stroke bg-white px-3 py-2 text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+            />
+          </label>
           <label className="text-sm text-dark dark:text-white sm:col-span-2">
             Efectivo contado al cierre
             <input
@@ -327,7 +628,7 @@ export default function CashClosing() {
             />
           </label>
         </div>
-        <div className="mt-4 grid max-w-xl gap-2 rounded-md bg-gray-1 p-4 text-sm dark:bg-white/5">
+        <div className="mt-4 grid max-w-4xl gap-2 rounded-md bg-gray-1 p-4 text-sm dark:bg-white/5">
           <p>
             <span className="text-body-color dark:text-dark-6">Efectivo esperado: </span>
             <span className="font-semibold text-dark dark:text-white">{formatMoney(esperadoEfectivo)}</span>
@@ -344,6 +645,17 @@ export default function CashClosing() {
               {formatMoney(diferencia)}
             </span>
           </p>
+          {(safeNumber(draft.cardCreditIn) > 0 ||
+            safeNumber(draft.cardDebitIn) > 0 ||
+            safeNumber(draft.transferIn) > 0) && (
+            <p className="border-t border-stroke pt-2 dark:border-dark-3">
+              <span className="text-body-color dark:text-dark-6">Otros medios declarados (manual): </span>
+              <span className="font-medium text-dark dark:text-white">
+                crédito {formatMoney(draft.cardCreditIn)}, débito {formatMoney(draft.cardDebitIn)},
+                transferencia {formatMoney(draft.transferIn)}
+              </span>
+            </p>
+          )}
         </div>
         <label className="mt-4 block text-sm text-dark dark:text-white">
           Notas del cierre

@@ -7,6 +7,7 @@ type SupplierCreateBody = {
   phone?: string | null;
   gender?: string;
   is_active?: boolean;
+  ingredient_product_ids?: number[];
 };
 
 export async function GET(request: Request) {
@@ -63,6 +64,9 @@ export async function POST(request: Request) {
 
   const phone = body.phone === undefined || body.phone === null ? null : String(body.phone).trim();
   const gender = (body.gender ?? "male").trim() || "male";
+  const ingredient_product_ids = Array.isArray(body.ingredient_product_ids)
+    ? body.ingredient_product_ids.filter((id) => typeof id === "number" && Number.isFinite(id))
+    : [];
 
   const backendBaseUrl = getBackendBaseUrl();
   const url = toAbsoluteUrl(backendBaseUrl, "/personnel/suppliers");
@@ -77,6 +81,7 @@ export async function POST(request: Request) {
         phone: phone ? phone : null,
         gender,
         is_active: body.is_active ?? true,
+        ingredient_product_ids,
       }),
     });
   } catch (error) {

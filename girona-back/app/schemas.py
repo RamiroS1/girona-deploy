@@ -113,7 +113,7 @@ class SupplierBase(BaseModel):
 
 
 class SupplierCreate(SupplierBase):
-    pass
+    ingredient_product_ids: list[int] = Field(default_factory=list)
 
 
 class SupplierUpdate(BaseModel):
@@ -121,17 +121,21 @@ class SupplierUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=50)
     gender: str | None = Field(default=None, max_length=20)
     is_active: bool | None = None
+    ingredient_product_ids: list[int] | None = None
 
 
 class SupplierOut(SupplierBase):
     id: int
     created_at: datetime
+    ingredient_product_ids: list[int] = Field(default_factory=list)
 
     class Config:
         orm_mode = True
 
 
 class PurchaseItemCreate(BaseModel):
+    # True: gasto "Otros" (solo registro y egreso, no toca stock ni productos de inventario)
+    is_other_expense: bool = False
     product_id: int | None = None
     product_name: str | None = Field(default=None, max_length=200)
     product_kind: InventoryProductKind | None = None
@@ -150,8 +154,9 @@ class PurchaseCreate(BaseModel):
 
 class PurchaseItemOut(BaseModel):
     id: int
-    product_id: int
+    product_id: int | None = None
     product_name: str | None
+    is_other_expense: bool = False
     supplier_id: int | None
     quantity: Decimal
     unit_cost: Decimal
@@ -164,6 +169,7 @@ class PurchaseItemOut(BaseModel):
 class PurchaseOut(BaseModel):
     id: int
     supplier_id: int | None
+    supplier_name: str | None = None
     purchased_at: datetime | None
     received_at: datetime | None
     total_cost: Decimal
@@ -312,6 +318,7 @@ class PosOrderItemCreate(BaseModel):
 class PosOrderCreate(BaseModel):
     table_id: int
     service_total: Decimal = Field(default=Decimal("0"), ge=0)
+    waiter_id: int | None = None
     items: list[PosOrderItemCreate] = Field(min_length=1)
 
 
@@ -345,6 +352,7 @@ class PosOrderOut(BaseModel):
     id: int
     table_id: int
     waiter_id: int | None
+    waiter_name: str | None = None
     sale_id: int | None = None
     status: str
     electronic_invoice_status: str | None = None
@@ -521,7 +529,8 @@ class SalesAdjustmentsByMonthOut(BaseModel):
 class MenuItemIngredient(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     unit: str | None = Field(default=None, max_length=20)
-    weight: Decimal = Field(gt=0, description="Cantidad consumida (ej. gramos) por porción")
+    # Histórico/seed puede tener 0 en filas opcionales; la API sigue validando escritura en menu.py
+    weight: Decimal = Field(ge=0, description="Cantidad consumida (ej. gramos) por porción")
     price: Decimal
     total: Decimal | None = None
 

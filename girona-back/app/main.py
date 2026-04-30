@@ -80,6 +80,38 @@ def _auto_migrate_schema() -> None:
                                 "ADD COLUMN google_event_id VARCHAR"
                             )
                         )
+                si_exists = conn.execute(
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='supplier_ingredients'"
+                    )
+                ).first()
+                if not si_exists:
+                    conn.execute(
+                        text(
+                            """
+                            CREATE TABLE supplier_ingredients (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+                                product_id INTEGER NOT NULL REFERENCES inventory_products(id) ON DELETE CASCADE,
+                                UNIQUE (supplier_id, product_id)
+                            )
+                            """
+                        )
+                    )
+                pi_sqlite = conn.execute(
+                    text(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='purchase_items'"
+                    )
+                ).first()
+                if pi_sqlite:
+                    pi_cols = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(purchase_items)")).fetchall()
+                    }
+                    if "other_label" not in pi_cols:
+                        conn.execute(
+                            text("ALTER TABLE purchase_items ADD COLUMN other_label VARCHAR(200)")
+                        )
                 return
             conn.execute(text("ALTER TABLE IF EXISTS inventory_products ALTER COLUMN unit DROP NOT NULL"))
             conn.execute(text("ALTER TABLE IF EXISTS inventory_products DROP COLUMN IF EXISTS reorder_point"))
@@ -98,6 +130,15 @@ def _auto_migrate_schema() -> None:
             conn.execute(
                 text("ALTER TABLE IF EXISTS purchase_items ADD COLUMN IF NOT EXISTS supplier_id INTEGER")
             )
+            conn.execute(
+                text("ALTER TABLE IF EXISTS purchase_items ADD COLUMN IF NOT EXISTS other_label VARCHAR(200)")
+            )
+            try:
+                conn.execute(
+                    text("ALTER TABLE purchase_items ALTER COLUMN product_id DROP NOT NULL")
+                )
+            except Exception:  # noqa: S110
+                pass
             conn.execute(
                 text("ALTER TABLE IF EXISTS sales ADD COLUMN IF NOT EXISTS customer_id INTEGER")
             )
@@ -177,6 +218,30 @@ def _auto_migrate_schema() -> None:
                 text(
                     "ALTER TABLE IF EXISTS reservations "
                     "ADD COLUMN IF NOT EXISTS google_event_id VARCHAR"
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS supplier_ingredients (
+                        id SERIAL PRIMARY KEY,
+                        supplier_id INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+                        product_id INTEGER NOT NULL REFERENCES inventory_products(id) ON DELETE CASCADE,
+                        CONSTRAINT uq_supplier_ingredient UNIQUE (supplier_id, product_id)
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_supplier_ingredients_supplier_id "
+                    "ON supplier_ingredients (supplier_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_supplier_ingredients_product_id "
+                    "ON supplier_ingredients (product_id)"
                 )
             )
     except Exception as exc:

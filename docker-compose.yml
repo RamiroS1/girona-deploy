@@ -14,10 +14,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    # Publicado en el host para que el backend conecte vía host.docker.internal (evita fallos
-    # de enrutado/firewall entre contenedores en algunos equipos con UFW, etc.)
+    # Puerto en el HOST: 25432 (antes 15432) para esquivar docker-proxy huérfanos con Docker Snap
+    # que a veces dejan ocupado 15432 incluso tras `systemctl restart docker`.
+    # Desde fuera del compose: psql/pgadmin -> localhost:25432 -> contenedor :5432
     ports:
-      - "15432:5432"
+      - "${POSTGRES_HOST_PORT:-25432}:5432"
 
   backend:
     build:
@@ -31,8 +32,8 @@ services:
         condition: service_healthy
     environment:
       GIRONA_DB_WAIT_HOST: host.docker.internal
-      GIRONA_DB_WAIT_PORT: "15432"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-girona_user}:${POSTGRES_PASSWORD:-girona_pass_change_me}@host.docker.internal:15432/${POSTGRES_DB:-girona_prod}
+      GIRONA_DB_WAIT_PORT: "${POSTGRES_HOST_PORT:-25432}"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-girona_user}:${POSTGRES_PASSWORD:-girona_pass_change_me}@host.docker.internal:${POSTGRES_HOST_PORT:-25432}/${POSTGRES_DB:-girona_prod}
       AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-1}
       AUTO_MIGRATE_SCHEMA: ${AUTO_MIGRATE_SCHEMA:-1}
       FACTUS_ENABLED: ${FACTUS_ENABLED:-1}
@@ -61,8 +62,10 @@ services:
       FACTUS_ESTABLISHMENT_PHONE: ${FACTUS_ESTABLISHMENT_PHONE:-}
       FACTUS_ESTABLISHMENT_EMAIL: ${FACTUS_ESTABLISHMENT_EMAIL:-}
       FACTUS_ESTABLISHMENT_MUNICIPALITY_ID: ${FACTUS_ESTABLISHMENT_MUNICIPALITY_ID:-}
+    # Puerto en el HOST hacia el API (uvicorn sigue en :8000 dentro del contenedor).
+    # Si «address already in use» en 8000 (docker-proxy Snap), define BACKEND_HOST_PORT en .env p. ej. 28000.
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8000}:8000"
 
   frontend:
     build:
@@ -74,12 +77,11 @@ services:
     depends_on:
       backend:
         condition: service_started
-    # El servidor de Next (rutas /api/*) debe alcanzar el API. En algunos hosts `backend:8000`
-    # no enruta entre contenedores; el puerto 8000 publicado en el host es fiable.
+    # El servidor de Next (rutas /api/*) debe alcanzar el API vía mismo puerto publicado en host.
     environment:
-      BACKEND_URL: http://host.docker.internal:8000
-      # Navegador (si algún fetch client-side usa la URL pública)
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      BACKEND_URL: http://host.docker.internal:${BACKEND_HOST_PORT:-8000}
+      # Navegador (fetch client-side desde el host debe coincidir con BACKEND_HOST_PORT)
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_HOST_PORT:-8000}
       NODE_ENV: production
     ports:
       - "3000:3000"

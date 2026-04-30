@@ -5,7 +5,7 @@ from decimal import Decimal
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func
+from sqlalchemy import case, exists, func
 from sqlalchemy.orm import Session, joinedload
 
 from . import db, models, schemas
@@ -89,6 +89,7 @@ def _as_decimal(value: Decimal | int | str) -> Decimal:
 def list_products(
     active: bool | None = True,
     kind: schemas.InventoryProductKind | None = None,
+    sort: str | None = None,
     db_session: Session = Depends(db.get_db),
 ):
     query = db_session.query(models.InventoryProduct)
@@ -96,7 +97,17 @@ def list_products(
         query = query.filter(models.InventoryProduct.is_active == active)
     if kind is not None:
         query = query.filter(models.InventoryProduct.kind == kind.value)
-    return query.order_by(models.InventoryProduct.name.asc()).all()
+    if sort == "supplier_linked":
+        linked = exists().where(
+            models.SupplierIngredient.product_id == models.InventoryProduct.id
+        )
+        query = query.order_by(
+            case((linked, 0), else_=1),
+            models.InventoryProduct.name.asc(),
+        )
+    else:
+        query = query.order_by(models.InventoryProduct.name.asc())
+    return query.all()
 
 
 @router.post("/products", response_model=schemas.InventoryProductOut, status_code=201)
@@ -389,6 +400,55 @@ def update_supplier(
     return supplier
 
 
+def _resolve_purchase_supplier_name(p: models.Purchase) -> str | None:
+    if p.supplier:
+        return p.supplier.name
+    line_names: list[str] = []
+    for it in p.items:
+        if it.supplier:
+            line_names.append(it.supplier.name)
+    if not line_names:
+        return None
+    unique: list[str] = list(dict.fromkeys(line_names))
+    if len(unique) == 1:
+        return unique[0]
+    return "Varios proveedores"
+
+
+def _purchase_item_to_out(i: models.PurchaseItem) -> schemas.PurchaseItemOut:
+    return schemas.PurchaseItemOut(
+        id=i.id,
+        product_id=i.product_id,
+        product_name=i.product_name,
+        is_other_expense=i.product_id is None,
+        supplier_id=i.supplier_id,
+        quantity=i.quantity,
+        unit_cost=i.unit_cost,
+        line_total=i.line_total,
+    )
+
+
+def _purchase_to_out(p: models.Purchase) -> schemas.PurchaseOut:
+    return schemas.PurchaseOut(
+        id=p.id,
+        supplier_id=p.supplier_id,
+        supplier_name=_resolve_purchase_supplier_name(p),
+        purchased_at=p.purchased_at,
+        received_at=p.received_at,
+        total_cost=p.total_cost,
+        created_at=p.created_at,
+        items=[_purchase_item_to_out(i) for i in p.items],
+    )
+
+
+def _purchase_out_load_options() -> list:
+    return [
+        joinedload(models.Purchase.supplier),
+        joinedload(models.Purchase.items).joinedload(models.PurchaseItem.product),
+        joinedload(models.Purchase.items).joinedload(models.PurchaseItem.supplier),
+    ]
+
+
 @router.post("/purchases", response_model=schemas.PurchaseOut, status_code=201)
 def create_purchase(
     payload: schemas.PurchaseCreate, db_session: Session = Depends(db.get_db)
@@ -448,6 +508,31 @@ def create_purchase(
     supplier_ids: set[int] = set()
 
     for item in payload.items:
+        if item.is_other_expense:
+            label = (item.product_name or "").strip()
+            if not label:
+                raise HTTPException(
+                    status_code=400, detail="Descripcion requerida para categoria Otros"
+                )
+            supplier_id = resolve_supplier_id(item.supplier_id)
+            if supplier_id is not None:
+                supplier_ids.add(supplier_id)
+            qty = _as_decimal(item.quantity)
+            unit_cost = _as_decimal(item.unit_cost).quantize(Decimal("1"))
+            line_total = (qty * unit_cost).quantize(Decimal("1"))
+            total += line_total
+            purchase_item = models.PurchaseItem(
+                purchase_id=purchase.id,
+                product_id=None,
+                other_label=label,
+                supplier_id=supplier_id,
+                quantity=qty,
+                unit_cost=unit_cost,
+                line_total=line_total,
+            )
+            db_session.add(purchase_item)
+            continue
+
         product = resolve_product(item)
         supplier_id = resolve_supplier_id(item.supplier_id)
         if supplier_id is not None:
@@ -460,6 +545,7 @@ def create_purchase(
         purchase_item = models.PurchaseItem(
             purchase_id=purchase.id,
             product_id=product.id,
+            other_label=None,
             supplier_id=supplier_id,
             quantity=qty,
             unit_cost=unit_cost,
@@ -494,19 +580,27 @@ def create_purchase(
         purchase.supplier_id = supplier_ids.pop() if len(supplier_ids) == 1 else None
     db_session.add(purchase)
     db_session.commit()
-    db_session.refresh(purchase)
-    return purchase
+    p_full = (
+        db_session.query(models.Purchase)
+        .options(*_purchase_out_load_options())
+        .filter(models.Purchase.id == purchase.id)
+        .first()
+    )
+    if not p_full:
+        raise HTTPException(status_code=500, detail="No se pudo cargar la compra creada")
+    return _purchase_to_out(p_full)
 
 
 @router.get("/purchases", response_model=list[schemas.PurchaseOut])
 def list_purchases(db_session: Session = Depends(db.get_db)):
-    return (
+    rows = (
         db_session.query(models.Purchase)
-        .options(joinedload(models.Purchase.items).joinedload(models.PurchaseItem.product))
+        .options(*_purchase_out_load_options())
         .order_by(models.Purchase.id.desc())
         .limit(200)
         .all()
     )
+    return [_purchase_to_out(p) for p in rows]
 
 
 @router.get("/recipes/{menu_item_id}", response_model=schemas.RecipeOut)
@@ -531,6 +625,18 @@ def list_recipes(db_session: Session = Depends(db.get_db)):
         ingredients: list[schemas.RecipeIngredientOut] = []
         if isinstance(menu_item.ingredients, list):
             for raw in menu_item.ingredients:
+                if isinstance(raw, str):
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    ingredients.append(
+                        schemas.RecipeIngredientOut(
+                            name=line,
+                            unit=None,
+                            quantity=Decimal("0"),
+                        )
+                    )
+                    continue
                 if not isinstance(raw, dict):
                     continue
                 name = str(raw.get("name", "")).strip()
@@ -538,11 +644,15 @@ def list_recipes(db_session: Session = Depends(db.get_db)):
                 quantity = raw.get("quantity", 0)
                 if not name:
                     continue
+                try:
+                    q = quantity if isinstance(quantity, Decimal) else Decimal(str(quantity))
+                except Exception:
+                    q = Decimal("0")
                 ingredients.append(
                     schemas.RecipeIngredientOut(
                         name=name,
                         unit=str(unit) if unit is not None else None,
-                        quantity=quantity,
+                        quantity=q,
                     )
                 )
         if not ingredients:

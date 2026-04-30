@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { SearchIcon } from "@/assets/icons";
 import { standardFormat } from "@/lib/format-number";
 
@@ -13,7 +14,60 @@ type Supplier = {
   gender?: string | null;
   is_active: boolean;
   created_at: string;
+  ingredient_product_ids?: number[];
 };
+
+type SupplierIngredientOption = {
+  id: number;
+  name: string;
+  unit: string | null;
+};
+
+const INGREDIENT_UNIT_OPTIONS = [
+  { value: "mililitros", label: "ML" },
+  { value: "gramos", label: "GR" },
+  { value: "unidades", label: "Unidad" },
+];
+
+type SupplierIngredientRowState =
+  | { kind: "existing"; productId: number | "" }
+  | {
+      kind: "new";
+      name: string;
+      unit: string;
+      initial_quantity: string;
+      total_cost: string;
+      sku: string;
+    };
+
+function safeNumber(value: unknown) {
+  const asNumber = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(asNumber) ? asNumber : null;
+}
+
+function normalizeMoneyInput(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function formatCopInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  const asNumber = Number(digits);
+  if (!Number.isFinite(asNumber)) return "";
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  }).format(asNumber);
+}
+
+function computeUnitCost(quantity: unknown, totalCost: unknown) {
+  const qty = safeNumber(quantity);
+  const total = safeNumber(typeof totalCost === "string" ? totalCost.replace(/\D/g, "") : totalCost);
+  if (qty === null || total === null || qty <= 0) return 0;
+  return Math.round(total / qty);
+}
 
 type Customer = {
   id: number;
@@ -69,6 +123,15 @@ function normalizeSearchText(value: string) {
     .trim();
 }
 
+function tabKeyFromQueryParam(raw: string | null): TabKey | null {
+  if (!raw) return null;
+  const t = raw.toLowerCase().trim();
+  if (t === "suppliers" || t === "proveedores" || t === "proveedor") return "suppliers";
+  if (t === "customers" || t === "clientes" || t === "cliente") return "customers";
+  if (t === "waiters" || t === "meseros" || t === "mesero") return "waiters";
+  return null;
+}
+
 function getCardBackground(
   tab: TabKey,
   gender: string | null | undefined,
@@ -84,8 +147,14 @@ function getCardBackground(
 }
 
 export default function Personnel() {
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<TabKey>("customers");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const next = tabKeyFromQueryParam(searchParams.get("tab"));
+    if (next) setTab(next);
+  }, [searchParams]);
   const [searchTerm, setSearchTerm] = useState("");
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>({ kind: "idle" });
 
@@ -109,6 +178,12 @@ export default function Personnel() {
   const [documentInput, setDocumentInput] = useState("");
   const [phoneInput, setPhoneInput] = useState("");
   const [genderInput, setGenderInput] = useState("male");
+
+  const [supplierIngredientCatalog, setSupplierIngredientCatalog] = useState<
+    SupplierIngredientOption[]
+  >([]);
+  const [supplierIngredientCatalogLoading, setSupplierIngredientCatalogLoading] = useState(false);
+  const [supplierIngredientRows, setSupplierIngredientRows] = useState<SupplierIngredientRowState[]>([]);
 
   const [togglingIds, setTogglingIds] = useState<Set<number>>(() => new Set());
 
@@ -139,6 +214,35 @@ export default function Personnel() {
   useEffect(() => {
     loadCurrentTab();
   }, [tab]);
+
+  useEffect(() => {
+    if (!showForm || tab !== "suppliers") return;
+    let cancelled = false;
+    setSupplierIngredientCatalogLoading(true);
+    (async () => {
+      try {
+        const params = new URLSearchParams({ kind: "ingredient", active: "true" });
+        const response = await fetch(`/api/inventory/products?${params.toString()}`, {
+          cache: "no-store",
+        });
+        const payload = (await response.json().catch(() => null)) as unknown;
+        if (!cancelled && response.ok && Array.isArray(payload)) {
+          setSupplierIngredientCatalog(
+            (payload as { id: number; name: string; unit?: string | null }[]).map((p) => ({
+              id: p.id,
+              name: p.name,
+              unit: p.unit ?? null,
+            })),
+          );
+        }
+      } finally {
+        if (!cancelled) setSupplierIngredientCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showForm, tab]);
 
   useEffect(() => {
     setShowForm(false);
@@ -204,6 +308,7 @@ export default function Personnel() {
     setDocumentInput("");
     setPhoneInput("");
     setGenderInput("male");
+    setSupplierIngredientRows([]);
   }
 
   function closeDetails() {
@@ -243,6 +348,17 @@ export default function Personnel() {
       setPhoneInput("");
     }
     setGenderInput(target.gender ?? "male");
+
+    if (tab === "suppliers") {
+      const ids = (target as Supplier).ingredient_product_ids ?? [];
+      setSupplierIngredientRows(
+        ids.length
+          ? ids.map((id) => ({ kind: "existing" as const, productId: id }))
+          : [],
+      );
+    } else {
+      setSupplierIngredientRows([]);
+    }
   }
 
   function cancelForm() {
@@ -374,7 +490,9 @@ export default function Personnel() {
         : `/api/personnel/${endpoint}/${editingId}`;
 
     const payload: Record<string, unknown> = { name };
-    payload.gender = genderInput;
+    if (tab !== "suppliers") {
+      payload.gender = genderInput;
+    }
 
     if (tab === "customers") {
       payload.identity_document = documentInput.trim();
@@ -383,6 +501,111 @@ export default function Personnel() {
 
     if (tab === "suppliers") {
       payload.phone = phone ? phone : null;
+      const resolvedIds: number[] = [];
+      for (let i = 0; i < supplierIngredientRows.length; i++) {
+        const row = supplierIngredientRows[i];
+        if (row.kind === "existing") {
+          if (row.productId === "" || !Number.isFinite(row.productId)) {
+            setSubmitStatus({
+              kind: "error",
+              message: `Selecciona un ingrediente en la fila ${
+                i + 1
+              } o usa "Nuevo ingrediente" y completa los campos.`,
+            });
+            return;
+          }
+          resolvedIds.push(row.productId);
+          continue;
+        }
+        const name = row.name.trim();
+        if (!name) {
+          setSubmitStatus({
+            kind: "error",
+            message: `Nombre requerido en el ingrediente nuevo (fila ${i + 1}).`,
+          });
+          return;
+        }
+        const unit = row.unit.trim();
+        if (!unit) {
+          setSubmitStatus({ kind: "error", message: `Unidad requerida en la fila ${i + 1}.` });
+          return;
+        }
+        if (!INGREDIENT_UNIT_OPTIONS.some((o) => o.value === unit)) {
+          setSubmitStatus({
+            kind: "error",
+            message: `La unidad debe ser mililitros, gramos o unidades (fila ${i + 1}).`,
+          });
+          return;
+        }
+        const q = row.initial_quantity.trim();
+        const totalRaw = normalizeMoneyInput(row.total_cost);
+        if (!q || !totalRaw) {
+          setSubmitStatus({
+            kind: "error",
+            message: `Cantidad y costo total son requeridos en la fila ${i + 1}.`,
+          });
+          return;
+        }
+        const numQ = safeNumber(q);
+        const numTc = safeNumber(totalRaw);
+        if (numQ === null || numQ <= 0) {
+          setSubmitStatus({
+            kind: "error",
+            message: `Cantidad inválida en la fila ${i + 1}.`,
+          });
+          return;
+        }
+        if (numTc === null || numTc < 0) {
+          setSubmitStatus({
+            kind: "error",
+            message: `Costo total inválido en la fila ${i + 1}.`,
+          });
+          return;
+        }
+
+        let productResponse: Response;
+        try {
+          productResponse = await fetch("/api/inventory/products", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              name,
+              kind: "ingredient",
+              unit,
+              initial_quantity: q,
+              total_cost: totalRaw,
+              sku: row.sku.trim() || null,
+              is_active: true,
+            }),
+          });
+        } catch {
+          setSubmitStatus({
+            kind: "error",
+            message: "No se pudo crear un ingrediente. Verifica el servidor.",
+          });
+          return;
+        }
+        const productPayload = (await productResponse.json().catch(() => null)) as {
+          id?: number;
+          message?: string;
+          detail?: unknown;
+        } | null;
+        if (!productResponse.ok) {
+          const msg =
+            (typeof productPayload?.message === "string" && productPayload.message) ||
+            (typeof productPayload?.detail === "string" && productPayload.detail) ||
+            "No se pudo registrar el ingrediente.";
+          setSubmitStatus({ kind: "error", message: msg });
+          return;
+        }
+        const newId = productPayload?.id;
+        if (typeof newId !== "number" || !Number.isFinite(newId)) {
+          setSubmitStatus({ kind: "error", message: "Respuesta inválida al crear ingrediente." });
+          return;
+        }
+        resolvedIds.push(newId);
+      }
+      payload.ingredient_product_ids = [...new Set(resolvedIds)];
     }
 
     if (formMode === "create") {
@@ -430,6 +653,11 @@ export default function Personnel() {
   }
 
   async function toggleActive(nextActive: boolean, targetId: number) {
+    if (!nextActive) {
+      const ok = window.confirm("¿Estás seguro de que deseas desactivarlo?");
+      if (!ok) return;
+    }
+
     setTogglingIds((prev) => new Set(prev).add(targetId));
 
     const endpoint =
@@ -570,7 +798,11 @@ export default function Personnel() {
           <div
             className={
               "mt-4 grid gap-3 " +
-              (tab === "customers" ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-3")
+              (tab === "customers"
+                ? "sm:grid-cols-2 lg:grid-cols-4"
+                : tab === "suppliers"
+                  ? "sm:grid-cols-2"
+                  : "sm:grid-cols-2 lg:grid-cols-3")
             }
           >
             <div>
@@ -613,21 +845,287 @@ export default function Personnel() {
               </div>
             ) : null}
 
-            <div>
-              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
-                Genero
-              </label>
-              <select
-                value={genderInput}
-                onChange={(e) => setGenderInput(e.target.value)}
-                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
-              >
-                <option value="male">Masculino</option>
-                <option value="female">Femenino</option>
-              </select>
-            </div>
+            {tab !== "suppliers" ? (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                  Genero
+                </label>
+                <select
+                  value={genderInput}
+                  onChange={(e) => setGenderInput(e.target.value)}
+                  className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                >
+                  <option value="male">Masculino</option>
+                  <option value="female">Femenino</option>
+                </select>
+              </div>
+            ) : null}
 
           </div>
+
+          {tab === "suppliers" ? (
+            <div className="mt-4 space-y-3 border-t border-stroke pt-4 dark:border-dark-3">
+              <div>
+                <span className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                  Ingredientes que compras a este proveedor
+                </span>
+                <p className="text-xs text-body-color dark:text-dark-6">
+                  Registra ingredientes nuevos con la misma informacion que en Inventario (stock inicial
+                  y costo total). Tambien podes vincular productos que ya existen en el catalogo.
+                </p>
+              </div>
+              {supplierIngredientCatalogLoading ? (
+                <p className="text-sm text-body-color dark:text-dark-6">Cargando catalogo…</p>
+              ) : (
+                <div className="space-y-4">
+                  {supplierIngredientRows.map((rowVal, index) => {
+                    const taken = new Set<number>();
+                    supplierIngredientRows.forEach((v, i) => {
+                      if (i === index) return;
+                      if (v.kind === "existing" && v.productId !== "" && typeof v.productId === "number") {
+                        taken.add(v.productId);
+                      }
+                    });
+                    return (
+                      <div
+                        key={`supplier-ingredient-row-${index}`}
+                        className="space-y-2 rounded-md border border-stroke bg-white p-3 dark:border-dark-3 dark:bg-gray-dark"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-medium text-body-color dark:text-dark-6">
+                            Fila {index + 1}
+                          </span>
+                          <div className="ml-auto flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSupplierIngredientRows((rows) => {
+                                  const next = [...rows];
+                                  next[index] = { kind: "existing", productId: "" };
+                                  return next;
+                                })
+                              }
+                              className={
+                                "rounded-md px-2.5 py-1 text-xs font-medium " +
+                                (rowVal.kind === "existing"
+                                  ? "bg-primary text-white"
+                                  : "border border-stroke text-dark hover:bg-gray-1 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2")
+                              }
+                            >
+                              Del catalogo
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSupplierIngredientRows((rows) => {
+                                  const next = [...rows];
+                                  next[index] = {
+                                    kind: "new",
+                                    name: "",
+                                    unit: "gramos",
+                                    initial_quantity: "",
+                                    total_cost: "",
+                                    sku: "",
+                                  };
+                                  return next;
+                                })
+                              }
+                              className={
+                                "rounded-md px-2.5 py-1 text-xs font-medium " +
+                                (rowVal.kind === "new"
+                                  ? "bg-primary text-white"
+                                  : "border border-stroke text-dark hover:bg-gray-1 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2")
+                              }
+                            >
+                              Nuevo ingrediente
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSupplierIngredientRows((rows) => rows.filter((_, i) => i !== index))
+                              }
+                              className="rounded-md border border-stroke px-2.5 py-1 text-xs font-medium text-dark hover:bg-gray-1 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        </div>
+                        {rowVal.kind === "existing" ? (
+                          <select
+                            value={rowVal.productId === "" ? "" : String(rowVal.productId)}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setSupplierIngredientRows((rows) => {
+                                const n = [...rows];
+                                n[index] = {
+                                  kind: "existing",
+                                  productId: raw === "" ? "" : Number(raw),
+                                };
+                                return n;
+                              });
+                            }}
+                            className="w-full min-w-0 max-w-md rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                          >
+                            <option value="">Selecciona ingrediente</option>
+                            {supplierIngredientCatalog.map((p) => (
+                              <option
+                                key={p.id}
+                                value={String(p.id)}
+                                disabled={taken.has(p.id)}
+                              >
+                                {p.name}
+                                {p.unit ? ` (${p.unit})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                            <div className="min-w-0 sm:col-span-2">
+                              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                                Nombre
+                              </label>
+                              <input
+                                value={rowVal.name}
+                                onChange={(e) =>
+                                  setSupplierIngredientRows((rows) => {
+                                    const n = [...rows];
+                                    const cur = n[index];
+                                    if (cur.kind === "new") {
+                                      n[index] = { ...cur, name: e.target.value };
+                                    }
+                                    return n;
+                                  })
+                                }
+                                placeholder="Ej: Queso mozzarella"
+                                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                                Unidad
+                              </label>
+                              <select
+                                value={rowVal.unit}
+                                onChange={(e) =>
+                                  setSupplierIngredientRows((rows) => {
+                                    const n = [...rows];
+                                    const cur = n[index];
+                                    if (cur.kind === "new") {
+                                      n[index] = { ...cur, unit: e.target.value };
+                                    }
+                                    return n;
+                                  })
+                                }
+                                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                              >
+                                <option value="">Selecciona unidad</option>
+                                {INGREDIENT_UNIT_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                                Cantidad
+                              </label>
+                              <input
+                                value={rowVal.initial_quantity}
+                                onChange={(e) =>
+                                  setSupplierIngredientRows((rows) => {
+                                    const n = [...rows];
+                                    const cur = n[index];
+                                    if (cur.kind === "new") {
+                                      n[index] = { ...cur, initial_quantity: e.target.value };
+                                    }
+                                    return n;
+                                  })
+                                }
+                                inputMode="decimal"
+                                placeholder="Stock inicial"
+                                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                                Costo total
+                              </label>
+                              <input
+                                value={formatCopInput(rowVal.total_cost)}
+                                onChange={(e) =>
+                                  setSupplierIngredientRows((rows) => {
+                                    const n = [...rows];
+                                    const cur = n[index];
+                                    if (cur.kind === "new") {
+                                      n[index] = {
+                                        ...cur,
+                                        total_cost: normalizeMoneyInput(e.target.value),
+                                      };
+                                    }
+                                    return n;
+                                  })
+                                }
+                                inputMode="numeric"
+                                placeholder="Ej: 45.000"
+                                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                                SKU (opcional)
+                              </label>
+                              <input
+                                value={rowVal.sku}
+                                onChange={(e) =>
+                                  setSupplierIngredientRows((rows) => {
+                                    const n = [...rows];
+                                    const cur = n[index];
+                                    if (cur.kind === "new") {
+                                      n[index] = { ...cur, sku: e.target.value };
+                                    }
+                                    return n;
+                                  })
+                                }
+                                className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                              />
+                            </div>
+                            <div className="flex flex-col justify-end">
+                              <span className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                                Costo unit. (calculado)
+                              </span>
+                              <div className="flex min-h-[42px] items-center rounded-md border border-stroke bg-gray-1 px-3 text-sm text-dark dark:border-dark-3 dark:bg-dark-2 dark:text-white">
+                                {formatCopInput(String(computeUnitCost(rowVal.initial_quantity, rowVal.total_cost)))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSupplierIngredientRows((rows) => [
+                        ...rows,
+                        {
+                          kind: "new" as const,
+                          name: "",
+                          unit: "gramos",
+                          initial_quantity: "",
+                          total_cost: "",
+                          sku: "",
+                        },
+                      ])
+                    }
+                    className="rounded-md border border-stroke px-3 py-2 text-sm font-medium text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
+                  >
+                    Agregar ingrediente
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
 
           {submitStatus.kind === "error" ? (
             <div className="mt-3 rounded-md border border-red-light bg-red-light-5 px-3 py-2 text-sm text-red dark:border-red-light/40 dark:bg-red-light-5/10 dark:text-red-light">

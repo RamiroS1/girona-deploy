@@ -7,6 +7,7 @@ type SupplierUpdateBody = {
   phone?: string | null;
   gender?: string;
   is_active?: boolean;
+  ingredient_product_ids?: number[];
 };
 
 export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -27,6 +28,11 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   if (body.phone !== undefined) payloadToSend.phone = body.phone;
   if (body.gender !== undefined) payloadToSend.gender = body.gender;
   if (body.is_active !== undefined) payloadToSend.is_active = body.is_active;
+  if (body.ingredient_product_ids !== undefined) {
+    payloadToSend.ingredient_product_ids = Array.isArray(body.ingredient_product_ids)
+      ? body.ingredient_product_ids.filter((id) => typeof id === "number" && Number.isFinite(id))
+      : [];
+  }
 
   let response: Response;
   try {

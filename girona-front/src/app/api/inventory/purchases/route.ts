@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 
 type PurchaseItemCreate = {
+  is_other_expense?: boolean;
   product_id?: number;
   product_name?: string;
   product_kind?: "ingredient" | "material";
   unit?: string;
   quantity?: string | number;
   unit_cost?: string | number;
+  supplier_id?: number | null;
 };
 
 type PurchaseCreateBody = {

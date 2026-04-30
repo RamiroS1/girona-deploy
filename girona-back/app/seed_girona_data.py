@@ -6,6 +6,10 @@ costo salsas (recetas internas inactivas).
 (Las fotos en IMAGENES_MENU sirven solo como referencia humana al interpretar el menú
 escrito; no se almacenan ni se muestran en la app.)
 
+ATENCIÓN: al completarse con éxito, este script borra y vuelve a cargar inventario,
+menú, ventas POS, etc. No ejecutarlo en producción si necesitas conservar ítems o
+ventas creados en la app (o haz copia de la base antes).
+
 Uso (desde la carpeta girona-back, con .env o DATABASE_URL):
 
   export GIRONA_DATA_DIR="/home/hp/Documents/GIRONA"
@@ -30,6 +34,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from . import db, models
+from .recetario_bar_seed import apply_recetario_bar_items, sync_recetario_bar_recipes
 
 # Orden: tablas hoja adentro primero
 _DELETE_SQL = text(
@@ -366,8 +371,9 @@ def run_seed(
     own_session = session is None
     db_session = session or db.SessionLocal()
     try:
+        # Un solo commit al final: si algo falla antes, rollback() revierte también
+        # el DELETE y no se pierde el menú ni datos creados desde la app.
         db_session.execute(_DELETE_SQL)
-        db_session.commit()
 
         wb = openpyxl.load_workbook(ex_path, data_only=True)
         ws = wb["Copia de ESTANDARIZACION "]
@@ -437,8 +443,6 @@ def run_seed(
             db_session.flush()
             inv_by_name[k] = p
             by_key[k] = p.id
-
-        db_session.commit()
 
         for p in inv_by_name.values():
             by_key[_norm(p.name)] = p.id
@@ -570,6 +574,11 @@ def run_seed(
                 is_active=True,
             )
             db_session.add(m)
+
+        apply_recetario_bar_items(db_session)
+        # Flush para que sync vea Recipes creados en apply y no duplique ix_recipes_menu_item_id.
+        db_session.flush()
+        sync_recetario_bar_recipes(db_session)
 
         db_session.commit()
         if own_session:

@@ -1,0 +1,400 @@
+[
+  {
+    "name": "Limonada",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["2 onzas de limón", "50 gramos de azúcar"]
+  },
+  {
+    "name": "Limonada de hierbabuena",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["2 onzas de limón", "50 gramos de azúcar", "25 gramos de hierbabuena"]
+  },
+  {
+    "name": "Limonada de cereza",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["1 onza de limón", "50 gramos de cereza", "1 onza de granadina"]
+  },
+  {
+    "name": "Limonada de coco",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["1 onza de limón", "20 gramos de azúcar", "250 gramos de pulpa de coco"]
+  },
+  {
+    "name": "Mandarinada",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["125 gramos de pulpa", "50 gramos de azúcar"]
+  },
+  {
+    "name": "Naranjada",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta. PDF sin detalle; misma base que otras frutadas.",
+    "ingredients": ["125 gramos de pulpa", "50 gramos de azúcar"]
+  },
+  {
+    "name": "Lulo",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["125 gramos de pulpa", "50 gramos de azúcar"]
+  },
+  {
+    "name": "Maracuyá",
+    "category": "Bebidas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["125 gramos de pulpa", "50 gramos de azúcar"]
+  },
+  {
+    "name": "Malteada frutos rojos",
+    "category": "Malteadas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "150 gramos de helado de vainilla",
+      "1 onza de leche condensada",
+      "2 onzas de sirope de frutos rojos",
+      "1 pitaya (en recetario figura como piazza)",
+      "20 gramos de chantilly",
+      "1 fresa"
+    ]
+  },
+  {
+    "name": "Malteada Oreo",
+    "category": "Malteadas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "150 gramos de helado de vainilla",
+      "2 onzas de leche",
+      "1 onza de leche condensada",
+      "5 galletas Oreo",
+      "1 pitaya (en recetario figura como piazza)",
+      "20 gramos de chantilly"
+    ]
+  },
+  {
+    "name": "Malteada Girona",
+    "category": "Malteadas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "150 gramos de helado de vainilla",
+      "1 onza de leche condensada",
+      "2 chocolatinas Jet",
+      "1 pitaya (en recetario figura como piazza)",
+      "20 gramos de chantilly",
+      "1 onza de salsa de chocolate"
+    ]
+  },
+  {
+    "name": "Fresas con crema",
+    "category": "Dulces bar",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["300 gramos de fresa", "150 gramos de chantilly", "2 onzas de leche condensada"]
+  },
+  {
+    "name": "Waffles",
+    "category": "Dulces bar",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "260 gramos de mezcla para waffles",
+      "55 gramos de manzana",
+      "35 gramos de kiwi",
+      "35 gramos de fresa",
+      "10 gramos de arándanos",
+      "1 onza de salsa de chocolate",
+      "75 gramos de helado",
+      "1 cereza"
+    ]
+  },
+  {
+    "name": "Mango Girona",
+    "category": "Dulces bar",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "500 gramos de mango",
+      "1 onza de leche condensada",
+      "2 onzas de limón",
+      "3 gramos de tajín",
+      "20 gramos de gusanitos"
+    ]
+  },
+  {
+    "name": "Soda tropical",
+    "category": "Sodas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de limón",
+      "2 onzas de frutos amarillos",
+      "1 soda de 300 ml",
+      "1 rama de romero",
+      "1 uchuva"
+    ]
+  },
+  {
+    "name": "Soda frutos rojos",
+    "category": "Sodas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de limón",
+      "2 onzas de frutos rojos",
+      "1 soda de 300 ml",
+      "1 rama de romero",
+      "2 cerezas"
+    ]
+  },
+  {
+    "name": "Soda Blueberry",
+    "category": "Sodas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de limón",
+      "2 onzas de frutos rojos",
+      "2 onzas de blue curaçao",
+      "1 soda de 300 ml",
+      "1 rama de romero",
+      "4 gramos de cerezas",
+      "2 gramos de arándanos"
+    ]
+  },
+  {
+    "name": "Jarra de refajo",
+    "category": "Sodas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "1 gaseosa Kola Hipinto",
+      "2 cervezas Águila originales",
+      "1 onza de limón"
+    ]
+  },
+  {
+    "name": "Jarra limonada de panela",
+    "category": "Sodas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["10 onzas de melado", "8 onzas de limón"]
+  },
+  {
+    "name": "Michelada tradicional",
+    "category": "Micheladas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["2 onzas de limón", "3 gusanitos", "1 bandera", "1 cereza"]
+  },
+  {
+    "name": "Michelada Passion",
+    "category": "Micheladas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de limón",
+      "2 onzas de maracuyá",
+      "5 gramos de arándanos",
+      "1 banderita",
+      "1 cereza"
+    ]
+  },
+  {
+    "name": "Michelada mango biche",
+    "category": "Micheladas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de limón",
+      "100 gramos de mango biche",
+      "1 banderita",
+      "4 gramos de cereza"
+    ]
+  },
+  {
+    "name": "Michelada Rossi",
+    "category": "Micheladas",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de limón",
+      "2 onzas de sirope de frutos rojos",
+      "1 banderita",
+      "4 gramos de cereza"
+    ]
+  },
+  {
+    "name": "Mojito cubano",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ron blanco",
+      "2 onzas de limón",
+      "5 gramos de hierbabuena",
+      "50 gramos de azúcar",
+      "150 ml de soda",
+      "8 gramos de cereza"
+    ]
+  },
+  {
+    "name": "Mojito Blue",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ron blanco",
+      "2 onzas de limón",
+      "5 gramos de hierbabuena",
+      "50 gramos de azúcar",
+      "150 ml de soda",
+      "8 gramos de cereza",
+      "2 onzas de blue curaçao"
+    ]
+  },
+  {
+    "name": "Gin Tonic",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ginebra",
+      "2 onzas de limón",
+      "1 unidad de agua tónica",
+      "1 rama de romero",
+      "8 gramos de cereza"
+    ]
+  },
+  {
+    "name": "Gin Tonic tropical",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ginebra",
+      "2 onzas de limón",
+      "1 unidad de agua tónica",
+      "1 rama de romero",
+      "8 gramos de cereza",
+      "2 onzas de frutos amarillos"
+    ]
+  },
+  {
+    "name": "The Queen",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ginebra",
+      "2 onzas de limón",
+      "1 unidad de agua tónica",
+      "1 rama de romero",
+      "8 gramos de cereza",
+      "2 onzas de frutos rojos"
+    ]
+  },
+  {
+    "name": "Margarita",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": ["2 onzas de tequila", "2 onzas de limón", "2 onzas de triple sec"]
+  },
+  {
+    "name": "Piña colada",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ron blanco",
+      "2 onzas de leche condensada",
+      "1 onza de crema de coco",
+      "160 gramos de piña"
+    ]
+  },
+  {
+    "name": "Tiki King",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "2 onzas de ron blanco",
+      "2 onzas de jarabe de maracuyá",
+      "200 ml de jugo de naranja",
+      "8 gramos de cerezas"
+    ]
+  },
+  {
+    "name": "Daikiri de frutos rojos",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "3 onzas de ron blanco",
+      "4 onzas de frutos rojos",
+      "4 gramos de cereza",
+      "1 onza de zumo de limón"
+    ]
+  },
+  {
+    "name": "San Francisco",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar — sin alcohol — (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "200 ml de jugo de naranja",
+      "100 gramos de piña",
+      "2 onzas de limón",
+      "50 gramos de azúcar"
+    ]
+  },
+  {
+    "name": "Copa de sangría",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "100 ml de vino tinto",
+      "80 ml de jugo de naranja",
+      "100 gramos de fruta",
+      "25 gramos de azúcar"
+    ]
+  },
+  {
+    "name": "Copa de tinto de verano",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "100 ml de vino tinto",
+      "80 ml de jugo de naranja",
+      "40 ml de soda",
+      "25 gramos de azúcar"
+    ]
+  },
+  {
+    "name": "Jarra de sangría",
+    "category": "Cocteleria",
+    "price": 0,
+    "description": "Recetario bar (sin precio en hoja). Definir precio en carta.",
+    "ingredients": [
+      "75 gramos de azúcar",
+      "450 gramos de fruta",
+      "1000 ml de vino tinto",
+      "400 ml de jugo de naranja"
+    ]
+  }
+]

@@ -50,7 +50,8 @@ type Supplier = {
 };
 
 type PurchaseItemRow = {
-  mode: "existing" | "new";
+  /** Otros: egreso con descripcion, no altera productos ni stock de inventario */
+  mode: "existing" | "new" | "other";
   product_id: string;
   product_name: string;
   unit: string;
@@ -96,6 +97,19 @@ function formatQtyPlain(value: unknown) {
   const asNumber = safeNumber(value);
   if (asNumber === null) return String(value ?? "");
   return String(Math.round(asNumber));
+}
+
+/** Ingredientes solo en texto (recetario bar) vienen con cantidad 0 y sin unidad ML/GR. */
+function formatRecipeCatalogIngredientBadge(ingredient: {
+  quantity: string;
+  unit: string | null;
+}): string {
+  const unitAbbr = formatUnitAbbr(ingredient.unit);
+  const qtyNum = safeNumber(ingredient.quantity);
+  if (!unitAbbr && (qtyNum === null || qtyNum === 0)) {
+    return "Texto";
+  }
+  return `${formatQtyPlain(ingredient.quantity)} ${unitAbbr}`.trim();
 }
 
 function normalizeIntegerInput(value: string | number | null | undefined) {
@@ -185,10 +199,13 @@ function productUnitToRecipeAbbrev(product: InventoryProduct): string {
 }
 
 async function fetchIngredientProductList(): Promise<InventoryProduct[]> {
-  const response = await fetch(
-    `/api/inventory/products?kind=${encodeURIComponent("ingredient")}`,
-    { cache: "no-store" },
-  );
+  const params = new URLSearchParams({
+    kind: "ingredient",
+    sort: "supplier_linked",
+  });
+  const response = await fetch(`/api/inventory/products?${params.toString()}`, {
+    cache: "no-store",
+  });
   const payload = (await response.json().catch(() => null)) as unknown;
   if (!response.ok || !Array.isArray(payload)) {
     return [];
@@ -497,13 +514,13 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
     tab === "ingredient"
       ? "Inventario de ingredientes"
       : tab === "material"
-        ? "Inventario de insumos"
+        ? "Inventario mobiliario"
         : "Inventario de recetas";
   const viewHint =
     tab === "ingredient"
       ? "Ingredientes y productos usados en recetas."
       : tab === "material"
-        ? "Vasos, platos, copas y materiales."
+        ? "Mobiliario y equipamiento. Al registrar una compra, cada linea queda asociada al producto y al proveedor indicado (mismo criterio que ingredientes)."
         : "Recetas registradas en el sistema.";
 
   const lowStockIds = useMemo(() => {
@@ -725,6 +742,7 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
     }
 
     const itemsPayload: Array<{
+      is_other_expense?: boolean;
       product_id?: number;
       product_name?: string;
       product_kind?: "ingredient" | "material";
@@ -736,7 +754,16 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
 
     for (let index = 0; index < purchaseItems.length; index += 1) {
       const row = purchaseItems[index];
-      if (row.mode === "existing") {
+      if (row.mode === "other") {
+        const productName = row.product_name.trim();
+        if (!productName) {
+          setSubmitStatus({
+            kind: "error",
+            message: `Descripcion requerida (Otros) en la fila ${index + 1}.`,
+          });
+          return;
+        }
+      } else if (row.mode === "existing") {
         const productId = Number(row.product_id);
         if (!Number.isFinite(productId) || productId <= 0) {
           setSubmitStatus({
@@ -810,7 +837,15 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
         return;
       }
 
-      if (row.mode === "existing") {
+      if (row.mode === "other") {
+        itemsPayload.push({
+          is_other_expense: true,
+          product_name: row.product_name.trim(),
+          supplier_id: supplierId,
+          quantity,
+          unit_cost: String(unitCost),
+        });
+      } else if (row.mode === "existing") {
         itemsPayload.push({
           product_id: Number(row.product_id),
           supplier_id: supplierId,
@@ -1127,7 +1162,7 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
               : "rounded-md border border-stroke px-3 py-2 text-sm font-medium text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
           }
         >
-          Insumos
+          Inventario Mobiliario
         </button>
         <button
           type="button"
@@ -1158,7 +1193,10 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
               Productos comprados
             </div>
             <div className="mb-2 text-xs text-body-color dark:text-dark-6">
-              El costo unitario se calcula automaticamente desde el costo total y la cantidad.
+              El costo unitario se calcula automaticamente desde el costo total y la cantidad.{" "}
+              <span className="font-medium text-dark dark:text-white">
+                Otros: egreso o compra con nombre propio, sin afectar stock de productos de inventario.
+              </span>
             </div>
             <div className="mb-2 grid grid-cols-1 gap-2 text-xs font-semibold uppercase text-dark-6 md:grid-cols-[0.8fr_1.6fr_0.9fr_0.9fr_0.9fr_0.9fr_0.9fr_auto]">
               <div>Tipo</div>
@@ -1181,16 +1219,20 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
                     <select
                       value={item.mode}
                       onChange={(e) => {
-                        const nextMode = e.target.value as "existing" | "new";
+                        const nextMode = e.target.value as "existing" | "new" | "other";
                         updatePurchaseRow(index, "mode", nextMode);
                         if (nextMode === "new" && tab === "ingredient" && !item.unit) {
                           updatePurchaseRow(index, "unit", "gramos");
+                        }
+                        if (nextMode === "other" && !String(item.quantity).trim()) {
+                          updatePurchaseRow(index, "quantity", "1");
                         }
                       }}
                       className="w-full rounded-md border border-stroke bg-white px-2 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
                     >
                       <option value="existing">Existente</option>
                       <option value="new">Nuevo</option>
+                      <option value="other">Otros</option>
                     </select>
                     {item.mode === "existing" ? (
                       <select
@@ -1218,6 +1260,15 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
                           </option>
                         ))}
                       </select>
+                    ) : item.mode === "other" ? (
+                      <input
+                        value={item.product_name}
+                        onChange={(e) =>
+                          updatePurchaseRow(index, "product_name", e.target.value)
+                        }
+                        className="w-full rounded-md border border-stroke bg-white px-2 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                        placeholder="Descripcion (no actualiza inventario)"
+                      />
                     ) : (
                       <input
                         value={item.product_name}
@@ -1229,12 +1280,14 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
                       />
                     )}
                     <select
-                      value={item.unit}
+                      value={item.mode === "other" ? "" : item.unit}
                       onChange={(e) => updatePurchaseRow(index, "unit", e.target.value)}
-                      disabled={tab !== "ingredient" || item.mode === "existing"}
+                      disabled={tab !== "ingredient" || item.mode === "existing" || item.mode === "other"}
                       className="w-full rounded-md border border-stroke bg-white px-2 py-2 text-sm text-dark outline-none focus:border-primary disabled:bg-gray-1 dark:border-dark-3 dark:bg-gray-dark dark:text-white dark:disabled:bg-dark-2"
                     >
-                      {tab !== "ingredient" ? (
+                      {item.mode === "other" ? (
+                        <option value="">—</option>
+                      ) : tab !== "ingredient" ? (
                         <option value="">Sin unidad</option>
                       ) : (
                         UNIT_OPTIONS.map((option) => (
@@ -1536,7 +1589,7 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
                             {ingredient.name}
                           </span>
                           <span className="rounded-full bg-secondary/10 px-2 py-0.5 text-xs font-semibold text-secondary">
-                            {formatQtyPlain(ingredient.quantity)} {formatUnitAbbr(ingredient.unit)}
+                            {formatRecipeCatalogIngredientBadge(ingredient)}
                           </span>
                         </div>
                       ))

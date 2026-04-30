@@ -6,6 +6,7 @@ import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
+import jsPDF from "jspdf";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -14,7 +15,8 @@ const COLOMBIA_TZ = "America/Bogota";
 
 type PurchaseItem = {
   id: number;
-  product_id: number;
+  product_id: number | null;
+  is_other_expense?: boolean;
   product_name: string | null;
   quantity: string;
   unit_cost: string;
@@ -24,6 +26,7 @@ type PurchaseItem = {
 type Purchase = {
   id: number;
   supplier_id: number | null;
+  supplier_name?: string | null;
   purchased_at: string | null;
   received_at: string | null;
   total_cost: string;
@@ -70,6 +73,115 @@ function inDateRange(
   const d = purchaseRefDate(p);
   if (!d) return false;
   return !d.isBefore(rangeStart, "day") && !d.isAfter(rangeEnd, "day");
+}
+
+/** jsPDF default font is Latin-1; evita acentos rotos en titulos. */
+function pdfText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function buildPurchasesPdf(
+  list: Purchase[],
+  rangeLabel: string,
+) {
+  const doc = new jsPDF({ format: "a4", unit: "mm" });
+  const pageW = doc.internal.pageSize.getWidth();
+  const margin = 14;
+  let y = 16;
+  doc.setFontSize(16);
+  doc.text(pdfText("Informe de compras"), margin, y);
+  y += 10;
+  doc.setFontSize(10);
+  doc.text(pdfText(`Periodo: ${rangeLabel}`), margin, y);
+  y += 6;
+  const now = new Date();
+  doc.text(
+    pdfText(
+      `Generado: ${now.toLocaleString("es-CO", { timeZone: "America/Bogota" })}`,
+    ),
+    margin,
+    y,
+  );
+  y += 12;
+  if (list.length === 0) {
+    doc.setFontSize(11);
+    doc.text(pdfText("No hay compras en este rango."), margin, y);
+    doc.save(`informe-compras-vacio-${dayjs().format("YYYY-MM-DD")}.pdf`);
+    return;
+  }
+
+  let totalSum = 0;
+  for (const p of list) {
+    const t = Number.parseFloat(String(p.total_cost));
+    if (Number.isFinite(t)) totalSum += t;
+  }
+
+  for (const p of list) {
+    if (y > 255) {
+      doc.addPage();
+      y = 16;
+    }
+    const proveedor =
+      (p.supplier_name && String(p.supplier_name).trim()) ||
+      (p.supplier_id != null ? `#${p.supplier_id}` : "—");
+    const fecha = p.received_at
+      ? new Date(p.received_at).toLocaleString("es-CO")
+      : "—";
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text(
+      pdfText(
+        `Compra #${p.id}  ·  ${formatCop(p.total_cost)}  ·  ${proveedor}`,
+      ),
+      margin,
+      y,
+    );
+    y += 7;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(pdfText(`Recibida: ${fecha}`), margin, y);
+    y += 6;
+    if (p.items?.length) {
+      doc.text(pdfText("Items:"), margin, y);
+      y += 5;
+      for (const it of p.items) {
+        if (y > 280) {
+          doc.addPage();
+          y = 16;
+        }
+        const label = (it.product_name?.trim()
+          ? it.product_name
+          : it.product_id != null
+            ? `#${it.product_id}`
+            : "—") ?? "";
+        const line = `  - ${label}  |  ${formatQty(
+          it.quantity,
+        )}  |  c/u ${formatCop(it.unit_cost)}  |  ${formatCop(it.line_total)}`;
+        const split = doc.splitTextToSize(pdfText(line), pageW - margin * 2);
+        for (const piece of split) {
+          doc.text(piece, margin, y);
+          y += 4;
+        }
+        if (y > 280) {
+          doc.addPage();
+          y = 16;
+        }
+      }
+    }
+    y += 4;
+  }
+
+  if (y > 270) {
+    doc.addPage();
+    y = 16;
+  }
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.text(pdfText(`Total en periodo: ${formatCop(totalSum)}`), margin, y);
+
+  doc.save(pdfText(`informe-compras-${dayjs().format("YYYY-MM-DD_HHmmss")}.pdf`));
 }
 
 async function safeJson(response: Response) {
@@ -220,12 +332,21 @@ export default function PurchasesReportList() {
               />
             )}
           </div>
-          <Link
-            href="/inventory"
-            className="rounded-md border border-stroke px-4 py-2 text-center text-sm font-medium text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
-          >
-            Volver a inventario
-          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => buildPurchasesPdf(filteredPurchases, rangeLabel)}
+              className="rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-white hover:bg-primary/90"
+            >
+              Descargar PDF
+            </button>
+            <Link
+              href="/inventory"
+              className="rounded-md border border-stroke px-4 py-2 text-center text-sm font-medium text-dark hover:bg-gray-2 dark:border-dark-3 dark:text-white dark:hover:bg-dark-2"
+            >
+              Volver a inventario
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -263,7 +384,7 @@ export default function PurchasesReportList() {
                     <tr className="border-b border-stroke dark:border-dark-3">
                       <td className="px-4 py-3 text-sm text-dark dark:text-white">{p.id}</td>
                       <td className="px-4 py-3 text-sm text-body-color dark:text-dark-6">
-                        {p.supplier_id ?? "-"}
+                        {(p.supplier_name && p.supplier_name.trim()) || "—"}
                       </td>
                       <td className="px-4 py-3 text-sm text-body-color dark:text-dark-6">
                         {p.received_at
@@ -300,7 +421,9 @@ export default function PurchasesReportList() {
                                       <td className="px-2 py-1 text-dark dark:text-white">
                                         {item.product_name?.trim()
                                           ? item.product_name
-                                          : `#${item.product_id}`}
+                                          : item.product_id != null
+                                            ? `#${item.product_id}`
+                                            : "—"}
                                       </td>
                                       <td className="px-2 py-1 text-body-color dark:text-dark-6">
                                         {formatQty(item.quantity)}

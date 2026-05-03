@@ -14,6 +14,7 @@ import { FaRegTrashAlt } from "react-icons/fa";
 import { HiOutlineCash } from "react-icons/hi";
 import { RiDrinks2Fill, RiProhibited2Line, RiRestaurantLine } from "react-icons/ri";
 import { getPosCategoryIcon } from "@/lib/pos-menu-category-icons";
+import { formatApiErrorMessage } from "@/app/api/personnel/_utils";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -951,13 +952,18 @@ export default function PosScreen() {
       const res = await fetch(`/api/pos/orders/${orderId}/close`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(closePayload),
+        body: JSON.stringify(
+          Object.fromEntries(
+            Object.entries(closePayload).filter(([, v]) => v !== ""),
+          ),
+        ),
       });
       const responsePayload = (await res.json().catch(() => null)) as any;
       if (!res.ok) {
         setPaymentStatus({
           kind: "error",
           message:
+            formatApiErrorMessage(responsePayload) ||
             (typeof responsePayload?.message === "string" && responsePayload.message) ||
             (typeof responsePayload?.detail === "string" && responsePayload.detail) ||
             "No se pudo marcar el pedido como pagado.",
@@ -1004,6 +1010,7 @@ export default function PosScreen() {
         setPaymentStatus({
           kind: "error",
           message:
+            formatApiErrorMessage(responsePayload) ||
             (typeof responsePayload?.message === "string" && responsePayload.message) ||
             (typeof responsePayload?.detail === "string" && responsePayload.detail) ||
             "No se pudo emitir factura en Factus.",
@@ -1050,6 +1057,7 @@ export default function PosScreen() {
         setPaymentStatus({
           kind: "error",
           message:
+            formatApiErrorMessage(payload) ||
             (typeof payload?.message === "string" && payload.message) ||
             (typeof payload?.detail === "string" && payload.detail) ||
             "Factus no esta listo. Revisa la configuracion antes de cobrar.",

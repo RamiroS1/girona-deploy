@@ -37,3 +37,35 @@ export function errorToJson(error: unknown) {
   }
   return { message: String(error) };
 }
+
+/** Mensaje legible desde respuestas FastAPI/Pydantic (detail string o lista) y payloads similares. */
+export function formatApiErrorMessage(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const p = payload as Record<string, unknown>;
+  const msg = p.message;
+  if (typeof msg === "string" && msg.trim()) return msg.trim();
+  const detail = p.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail)) {
+    const parts: string[] = [];
+    for (const e of detail) {
+      if (typeof e === "string" && e.trim()) {
+        parts.push(e.trim());
+        continue;
+      }
+      if (e && typeof e === "object") {
+        const row = e as Record<string, unknown>;
+        const m = row.msg;
+        if (typeof m === "string" && m.trim()) {
+          parts.push(m.trim());
+          continue;
+        }
+        const loc = Array.isArray(row.loc) ? row.loc.join(".") : "";
+        const type = typeof row.type === "string" ? row.type : "";
+        if (loc || type) parts.push([loc, type].filter(Boolean).join(" "));
+      }
+    }
+    if (parts.length) return parts.join("; ");
+  }
+  return "";
+}

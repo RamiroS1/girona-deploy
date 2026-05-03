@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !.env.deploy.example
+!.env.factus.example
 *.pem
 *.key
 *.p12

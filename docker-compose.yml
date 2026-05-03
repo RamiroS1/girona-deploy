@@ -1,7 +1,10 @@
+# Nombre de proyecto fijo: evita que Compose intente parar contenedores huérfanos
+# de otro project name (p. ej. tras fallos «permission denied» al stop).
+name: gironastack
+
 services:
   db:
     image: postgres:16
-    container_name: girona-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-girona_prod}
@@ -23,13 +26,18 @@ services:
   backend:
     build:
       context: ./girona-back
-    container_name: girona-backend
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
+    # Credenciales Factus: definir en .env y/o en .env.factus (este último sobrescribe).
+    env_file:
+      - path: .env
+        required: true
+      - path: .env.factus
+        required: false
     environment:
       GIRONA_DB_WAIT_HOST: host.docker.internal
       GIRONA_DB_WAIT_PORT: "${POSTGRES_HOST_PORT:-25432}"
@@ -40,10 +48,6 @@ services:
       FACTUS_ENVIRONMENT: ${FACTUS_ENVIRONMENT:-sandbox}
       FACTUS_API_BASE_URL: ${FACTUS_API_BASE_URL:-https://api-sandbox.factus.com.co}
       FACTUS_TOKEN_URL: ${FACTUS_TOKEN_URL:-https://api-sandbox.factus.com.co/oauth/token}
-      FACTUS_CLIENT_ID: ${FACTUS_CLIENT_ID:-}
-      FACTUS_CLIENT_SECRET: ${FACTUS_CLIENT_SECRET:-}
-      FACTUS_USERNAME: ${FACTUS_USERNAME:-}
-      FACTUS_PASSWORD: ${FACTUS_PASSWORD:-}
       FACTUS_NUMBERING_RANGE_ID: ${FACTUS_NUMBERING_RANGE_ID:-}
       FACTUS_PAYMENT_FORM_CODE: ${FACTUS_PAYMENT_FORM_CODE:-1}
       FACTUS_PAYMENT_METHOD_CODE: ${FACTUS_PAYMENT_METHOD_CODE:-10}
@@ -70,7 +74,6 @@ services:
   frontend:
     build:
       context: ./girona-front
-    container_name: girona-frontend
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -84,7 +87,9 @@ services:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_HOST_PORT:-8000}
       NODE_ENV: production
     ports:
-      - "3000:3000"
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
 
 volumes:
+  # Nombre estable: misma BD aunque cambie `name:` del proyecto. Opcional: POSTGRES_DATA_VOLUME_NAME en .env.
   postgres_data:
+    name: ${POSTGRES_DATA_VOLUME_NAME:-girona_postgres_data}

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { formatApiErrorMessage } from "@/app/api/personnel/_utils";
+
 function getBackendBaseUrl() {
   return (
     process.env.BACKEND_URL ??
@@ -86,10 +88,7 @@ export async function POST(
 
   const payload = await safeJson(response);
   if (!response.ok) {
-    const message =
-      (typeof (payload as any)?.detail === "string" && (payload as any).detail) ||
-      (typeof (payload as any)?.message === "string" && (payload as any).message) ||
-      "No se pudo marcar la orden como pagada";
+    const message = formatApiErrorMessage(payload) || "No se pudo marcar la orden como pagada";
 
     return NextResponse.json(
       { message, error: payload, backendUrl: backendBaseUrl, triedUrl: url },

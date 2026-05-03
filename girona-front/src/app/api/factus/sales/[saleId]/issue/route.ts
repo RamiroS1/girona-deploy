@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   errorToJson,
+  formatApiErrorMessage,
   getBackendBaseUrl,
   safeJson,
   toAbsoluteUrl,
@@ -51,10 +52,7 @@ export async function POST(
 
   const payload = await safeJson(response);
   if (!response.ok) {
-    const message =
-      (typeof (payload as any)?.detail === "string" && (payload as any).detail) ||
-      (typeof (payload as any)?.message === "string" && (payload as any).message) ||
-      "No se pudo emitir la factura en Factus";
+    const message = formatApiErrorMessage(payload) || "No se pudo emitir la factura en Factus";
 
     return NextResponse.json(
       { message, error: payload, backendUrl: backendBaseUrl, triedUrl: url },

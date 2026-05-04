@@ -1,5 +1,11 @@
 #!/bin/sh
 set -e
+# En Railway / hosting sin compose: establece GIRONA_DB_SKIP_WAIT=1 para no esperar TCP
+# antes de iniciar uvicorn (usa solo DATABASE_URL desde el lado de la app).
+if [ "${GIRONA_DB_SKIP_WAIT:-}" = "1" ]; then
+  exec "$@"
+fi
+
 DB_HOST="${GIRONA_DB_WAIT_HOST:-host.docker.internal}"
 DB_PORT="${GIRONA_DB_WAIT_PORT:-25432}"
 if [ -n "$DB_PORT" ]; then

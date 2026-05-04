@@ -42,12 +42,70 @@ type RecipeItem = {
   }>;
 };
 
+type PurchaseWithholdingOp = "purchase" | "service";
+
 type Supplier = {
   id: number;
   name: string;
   is_active: boolean;
   created_at: string;
+  tax_regime?: string;
+  income_tax_declarant?: boolean;
+  default_withholding_operation?: PurchaseWithholdingOp | string;
+  /** Porcentaje nominal configurado en el proveedor; ausente = tabla legal por declarante */
+  default_withholding_percent?: number | string | null;
 };
+
+const RETE_FUENTE_BASE_COMPRA = 524_000;
+const RETE_FUENTE_BASE_SERVICIO = 105_000;
+
+function effectiveIncomeTaxDeclarantPerson(
+  regime: string | undefined,
+  incomeTaxDeclarant: boolean | undefined,
+) {
+  const r = (regime || "common").toLowerCase();
+  if (r === "natural") return !!incomeTaxDeclarant;
+  return true;
+}
+
+function withholdingFraction(op: PurchaseWithholdingOp, declarant: boolean) {
+  if (op === "purchase") return declarant ? 0.025 : 0.035;
+  return declarant ? 0.04 : 0.06;
+}
+
+function parseSupplierStoredPercent(raw: number | string | null | undefined): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n =
+    typeof raw === "number" ? raw : Number.parseFloat(String(raw).replace(",", "."));
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return n;
+}
+
+function withholdingPreviewPurchase(
+  totalCop: number,
+  op: PurchaseWithholdingOp,
+  declarant: boolean,
+  customPercent: number | null,
+): { basis: number; rateFrac: number; amount: number; source: "custom" | "table" } | null {
+  const basis = op === "purchase" ? RETE_FUENTE_BASE_COMPRA : RETE_FUENTE_BASE_SERVICIO;
+  if (!(Number.isFinite(totalCop) && totalCop >= basis)) return null;
+  if (customPercent !== null) {
+    const rateFrac = customPercent / 100;
+    return {
+      basis,
+      rateFrac,
+      amount: Math.round(totalCop * rateFrac),
+      source: "custom",
+    };
+  }
+  const rateFrac = withholdingFraction(op, declarant);
+  return {
+    basis,
+    rateFrac,
+    amount: Math.round(totalCop * rateFrac),
+    source: "table",
+  };
+}
 
 type PurchaseItemRow = {
   /** Otros: egreso con descripcion, no altera productos ni stock de inventario */
@@ -403,6 +461,9 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
       total_cost: "",
     },
   ]);
+  const [purchaseWithholdingOp, setPurchaseWithholdingOp] =
+    useState<PurchaseWithholdingOp>("purchase");
+  const purchaseSupplierHoldSyncRef = useRef<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [submitStatus, setSubmitStatus] = useState<
     | { kind: "idle" }
@@ -543,6 +604,84 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
     );
   }, [recipes, searchTerm]);
 
+  const purchaseSubtotalCop = useMemo(() => {
+    let sum = 0;
+    for (const row of purchaseItems) {
+      const digits = normalizeMoneyInput(row.total_cost);
+      const line = safeNumber(digits);
+      if (line !== null && line > 0) sum += line;
+    }
+    return Math.round(sum);
+  }, [purchaseItems]);
+
+  const purchaseSupplierIdsDistinct = useMemo(() => {
+    const ids = new Set<number>();
+    for (const row of purchaseItems) {
+      const raw = row.supplier_id.trim();
+      if (!raw) continue;
+      const id = Number(raw);
+      if (Number.isFinite(id) && id > 0) ids.add(id);
+    }
+    return [...ids];
+  }, [purchaseItems]);
+
+  const purchaseWithholdingInfo = useMemo(() => {
+    if (purchaseSupplierIdsDistinct.length === 0) {
+      return { status: "no_supplier" as const };
+    }
+    if (purchaseSupplierIdsDistinct.length > 1) {
+      return { status: "multi_supplier" as const };
+    }
+    const supplier = suppliers.find((s) => s.id === purchaseSupplierIdsDistinct[0]);
+    if (!supplier) {
+      return { status: "unknown_supplier" as const };
+    }
+    const declarant = effectiveIncomeTaxDeclarantPerson(
+      supplier.tax_regime,
+      supplier.income_tax_declarant,
+    );
+    const basis =
+      purchaseWithholdingOp === "purchase" ? RETE_FUENTE_BASE_COMPRA : RETE_FUENTE_BASE_SERVICIO;
+    const customPct = parseSupplierStoredPercent(supplier.default_withholding_percent);
+    const applied = withholdingPreviewPurchase(
+      purchaseSubtotalCop,
+      purchaseWithholdingOp,
+      declarant,
+      customPct,
+    );
+    return {
+      status: "ok" as const,
+      supplier,
+      declarant,
+      basis,
+      applied,
+      customPercent: customPct,
+      baseLabel:
+        purchaseWithholdingOp === "purchase"
+          ? "Compra"
+          : "Servicio",
+    };
+  }, [
+    suppliers,
+    purchaseSupplierIdsDistinct,
+    purchaseSubtotalCop,
+    purchaseWithholdingOp,
+  ]);
+
+  useEffect(() => {
+    if (purchaseSupplierIdsDistinct.length !== 1) {
+      purchaseSupplierHoldSyncRef.current = null;
+      return;
+    }
+    const sid = purchaseSupplierIdsDistinct[0];
+    const supplier = suppliers.find((s) => s.id === sid);
+    if (!supplier) return;
+    if (purchaseSupplierHoldSyncRef.current === sid) return;
+    purchaseSupplierHoldSyncRef.current = sid;
+    const pref = supplier.default_withholding_operation;
+    if (pref === "service") setPurchaseWithholdingOp("service");
+    else setPurchaseWithholdingOp("purchase");
+  }, [purchaseSupplierIdsDistinct, suppliers]);
 
   function resetForm() {
     setNameInput("");
@@ -558,6 +697,8 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
 
   function resetPurchaseForm() {
     const defaultUnit = tab === "ingredient" ? "gramos" : "";
+    purchaseSupplierHoldSyncRef.current = null;
+    setPurchaseWithholdingOp("purchase");
     setPurchaseItems([
       {
         mode: "existing",
@@ -869,6 +1010,11 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          supplier_id:
+            purchaseSupplierIdsDistinct.length === 1
+              ? purchaseSupplierIdsDistinct[0]
+              : null,
+          withholding_operation_type: purchaseWithholdingOp,
           items: itemsPayload,
         }),
       });
@@ -1188,10 +1334,14 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
 
       {showCreate ? (
         <div className="mb-6 rounded-md border border-stroke bg-gray-1 p-4 dark:border-dark-3 dark:bg-dark-2">
-          <div className="mt-4">
+            <div className="mt-4">
             <div className="mb-2 text-sm font-semibold text-dark dark:text-white">
               Productos comprados
             </div>
+            <p className="mb-2 text-xs text-primary dark:text-primary">
+              Bajá después de cada linea hasta el cuadro de retención en la fuente (opción{" "}
+              <span className="font-semibold">Compra vs Servicio</span> según tabla DIAN).
+            </p>
             <div className="mb-2 text-xs text-body-color dark:text-dark-6">
               El costo unitario se calcula automaticamente desde el costo total y la cantidad.{" "}
               <span className="font-medium text-dark dark:text-white">
@@ -1353,6 +1503,88 @@ export default function Inventory({ backendBaseUrl }: { backendBaseUrl: string }
               </svg>
               Agregar producto
             </button>
+          </div>
+
+          <div id="purchase-withholding-section" className="mt-4 rounded-md border-2 border-primary/50 bg-white p-3 text-sm dark:border-primary/50 dark:bg-gray-dark">
+            <div className="font-semibold text-dark dark:text-white">
+              Retención en la fuente
+            </div>
+            <p className="mt-1 text-xs text-body-color dark:text-dark-6">
+              Según régimen del proveedor (Personas → Proveedores), tipo de operación de esta orden y, si lo
+              configuraste en el proveedor, un porcentaje fijo de retención. Bases desde las cuales procede la
+              retención:{" "}
+              Bases desde las cuales procede la retención:{" "}
+              <span className="font-medium text-dark dark:text-white">{formatCop(RETE_FUENTE_BASE_COMPRA)}</span>{" "}
+              si es compra de bienes y{" "}
+              <span className="font-medium text-dark dark:text-white">{formatCop(RETE_FUENTE_BASE_SERVICIO)}</span>{" "}
+              si es prestación de servicios.
+            </p>
+            <div className="mt-3">
+              <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                Tipo de operación (compra de bienes / servicio)
+              </label>
+              <select
+                value={purchaseWithholdingOp}
+                onChange={(e) =>
+                  setPurchaseWithholdingOp(e.target.value === "service" ? "service" : "purchase")
+                }
+                className="w-full max-w-md rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+              >
+                <option value="purchase">Compra (bienes)</option>
+                <option value="service">Servicio</option>
+              </select>
+            </div>
+            <div className="mt-3 space-y-1 text-xs leading-relaxed">
+              <p className="text-body-color dark:text-dark-6">
+                Subtotal de la orden{" "}
+                <span className="font-medium text-dark dark:text-white">{formatCop(purchaseSubtotalCop)}</span>.
+              </p>
+              {purchaseWithholdingInfo.status === "no_supplier" ? (
+                <p className="text-amber dark:text-orange-400">
+                  Asigná un mismo proveedor en las líneas para calcular la retención aplicable.
+                </p>
+              ) : purchaseWithholdingInfo.status === "multi_supplier" ? (
+                <p className="text-amber dark:text-orange-400">
+                  Hay más de un proveedor en esta orden; la retención en la fuente no se registra hasta que
+                  todas las líneas correspondan al mismo proveedor (o configurá líneas aparte por
+                  proveedor).
+                </p>
+              ) : purchaseWithholdingInfo.status === "unknown_supplier" ? (
+                <p className="text-red">Proveedor no encontrado en catálogo.</p>
+              ) : (
+                <>
+                  <p className="text-dark dark:text-white">
+                    Proveedor{" "}
+                    <span className="font-semibold">{purchaseWithholdingInfo.supplier.name}</span>:{" "}
+                    {purchaseWithholdingInfo.supplier.tax_regime === "natural"
+                      ? `persona natural${
+                          purchaseWithholdingInfo.declarant
+                            ? ", declarante de renta"
+                            : ", NO declarante de renta"
+                        }.`
+                      : "régimen común (declarante de renta)."}
+                  </p>
+                  {purchaseWithholdingInfo.applied ? (
+                    <p className="text-green dark:text-green-400">
+                      Aplica {(purchaseWithholdingInfo.applied.rateFrac * 100).toLocaleString("es-CO", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 2,
+                      })}
+                      %
+                      {purchaseWithholdingInfo.applied.source === "custom"
+                        ? " (porcentaje definido en el proveedor)"
+                        : ""}{" "}
+                      — retención estimada{" "}
+                      <span className="font-semibold">{formatCop(purchaseWithholdingInfo.applied.amount)}</span>.
+                    </p>
+                  ) : (
+                    <p className="text-body-color dark:text-dark-6">
+                      No hay retención: el subtotal es inferior a la base aplicable ({formatCop(purchaseWithholdingInfo.basis)}).
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

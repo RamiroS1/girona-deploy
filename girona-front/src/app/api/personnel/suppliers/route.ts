@@ -7,6 +7,11 @@ type SupplierCreateBody = {
   phone?: string | null;
   gender?: string;
   is_active?: boolean;
+  tax_regime?: "common" | "natural";
+  income_tax_declarant?: boolean;
+  default_withholding_operation?: "purchase" | "service";
+  /** null = tabla legal; número 0–100 */
+  default_withholding_percent?: number | null;
   ingredient_product_ids?: number[];
 };
 
@@ -68,6 +73,28 @@ export async function POST(request: Request) {
     ? body.ingredient_product_ids.filter((id) => typeof id === "number" && Number.isFinite(id))
     : [];
 
+  const tax_regime =
+    body.tax_regime === "natural" ? "natural" : body.tax_regime === "common" ? "common" : "common";
+
+  const default_withholding_operation =
+    body.default_withholding_operation === "service" ? "service" : "purchase";
+
+  let default_withholding_percent: number | null | undefined = undefined;
+  if (body.default_withholding_percent !== undefined) {
+    if (body.default_withholding_percent === null) {
+      default_withholding_percent = null;
+    } else {
+      const n = Number(body.default_withholding_percent);
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        return NextResponse.json(
+          { message: "Porcentaje de retención inválido (0–100)" },
+          { status: 400 },
+        );
+      }
+      default_withholding_percent = n;
+    }
+  }
+
   const backendBaseUrl = getBackendBaseUrl();
   const url = toAbsoluteUrl(backendBaseUrl, "/personnel/suppliers");
 
@@ -81,6 +108,15 @@ export async function POST(request: Request) {
         phone: phone ? phone : null,
         gender,
         is_active: body.is_active ?? true,
+        tax_regime,
+        income_tax_declarant:
+          typeof body.income_tax_declarant === "boolean"
+            ? body.income_tax_declarant
+            : tax_regime === "common",
+        default_withholding_operation,
+        ...(default_withholding_percent !== undefined
+          ? { default_withholding_percent }
+          : {}),
         ingredient_product_ids,
       }),
     });

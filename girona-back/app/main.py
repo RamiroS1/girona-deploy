@@ -112,6 +112,70 @@ def _auto_migrate_schema() -> None:
                         conn.execute(
                             text("ALTER TABLE purchase_items ADD COLUMN other_label VARCHAR(200)")
                         )
+                sup_sqlite = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name='suppliers'")
+                ).first()
+                if sup_sqlite:
+                    sup_cols = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(suppliers)")).fetchall()
+                    }
+                    if "tax_regime" not in sup_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE suppliers "
+                                "ADD COLUMN tax_regime VARCHAR(20) NOT NULL DEFAULT 'common'"
+                            )
+                        )
+                    if "income_tax_declarant" not in sup_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE suppliers "
+                                "ADD COLUMN income_tax_declarant BOOLEAN NOT NULL DEFAULT 1"
+                            )
+                        )
+                    if "default_withholding_operation" not in sup_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE suppliers "
+                                "ADD COLUMN default_withholding_operation VARCHAR(20) NOT NULL DEFAULT 'purchase'"
+                            )
+                        )
+                    if "default_withholding_percent" not in sup_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE suppliers ADD COLUMN default_withholding_percent NUMERIC(8,4)"
+                            )
+                        )
+                pur_sqlite = conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name='purchases'")
+                ).first()
+                if pur_sqlite:
+                    pur_cols = {
+                        str(row[1])
+                        for row in conn.execute(text("PRAGMA table_info(purchases)")).fetchall()
+                    }
+                    if "withholding_operation_type" not in pur_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE purchases "
+                                "ADD COLUMN withholding_operation_type VARCHAR(20)"
+                            )
+                        )
+                    if "withholding_source_rate" not in pur_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE purchases "
+                                "ADD COLUMN withholding_source_rate NUMERIC(10,6)"
+                            )
+                        )
+                    if "withholding_source_amount" not in pur_cols:
+                        conn.execute(
+                            text(
+                                "ALTER TABLE purchases "
+                                "ADD COLUMN withholding_source_amount NUMERIC(14,4)"
+                            )
+                        )
                 return
             conn.execute(text("ALTER TABLE IF EXISTS inventory_products ALTER COLUMN unit DROP NOT NULL"))
             conn.execute(text("ALTER TABLE IF EXISTS inventory_products DROP COLUMN IF EXISTS reorder_point"))
@@ -218,6 +282,49 @@ def _auto_migrate_schema() -> None:
                 text(
                     "ALTER TABLE IF EXISTS reservations "
                     "ADD COLUMN IF NOT EXISTS google_event_id VARCHAR"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS suppliers "
+                    "ADD COLUMN IF NOT EXISTS tax_regime VARCHAR(20) NOT NULL DEFAULT 'common'"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS suppliers "
+                    "ADD COLUMN IF NOT EXISTS income_tax_declarant BOOLEAN NOT NULL DEFAULT TRUE"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS suppliers "
+                    "ADD COLUMN IF NOT EXISTS default_withholding_operation VARCHAR(20) "
+                    "NOT NULL DEFAULT 'purchase'"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS suppliers "
+                    "ADD COLUMN IF NOT EXISTS default_withholding_percent NUMERIC(8, 4)"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS purchases "
+                    "ADD COLUMN IF NOT EXISTS withholding_operation_type VARCHAR(20)"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS purchases "
+                    "ADD COLUMN IF NOT EXISTS withholding_source_rate NUMERIC(10, 6)"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE IF EXISTS purchases "
+                    "ADD COLUMN IF NOT EXISTS withholding_source_amount NUMERIC(14, 4)"
                 )
             )
             conn.execute(

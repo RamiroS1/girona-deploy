@@ -86,6 +86,14 @@ class Supplier(Base):
     name = Column(String, unique=True, index=True, nullable=False)
     phone = Column(String, nullable=True)
     gender = Column(String, nullable=False, default="male")
+    # Persona jurídica / régimen común vs persona natural (afecta retención fuente junto al indicador siguiente)
+    tax_regime = Column(String(20), nullable=False, default="common")
+    # Solo relevante cuando tax_regime == "natural"; en común se asume declarante
+    income_tax_declarant = Column(Boolean, nullable=False, default=True)
+    # Valor por defecto para retención (compra bienes vs servicios) al cargar orden en Inventario
+    default_withholding_operation = Column(String(20), nullable=False, default="purchase")
+    # Porcentaje nominal de retención (ej. 2.5 = 2,5 %); null = usar tablas legales según régimen/declarante
+    default_withholding_percent = Column(Numeric(8, 4), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -125,6 +133,11 @@ class Purchase(Base):
     received_at = Column(DateTime(timezone=True), nullable=True)
 
     total_cost = Column(Numeric(14, 4), nullable=False, default=0)
+    # compra vs servicio (umbrales y % distintos para retención en la fuente)
+    withholding_operation_type = Column(String(20), nullable=True)
+    # fracción, p. ej. 0.025; null si no hubo retención
+    withholding_source_rate = Column(Numeric(10, 6), nullable=True)
+    withholding_source_amount = Column(Numeric(14, 4), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     supplier = relationship("Supplier", back_populates="purchases")

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import case, exists, func
 from sqlalchemy.orm import Session, joinedload
 
-from . import db, models, schemas
+from . import db, models, schemas, withholding_co
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -348,6 +348,11 @@ def create_supplier(
     supplier = models.Supplier(
         name=payload.name.strip(),
         phone=payload.phone,
+        gender=payload.gender.strip() if payload.gender else "male",
+        tax_regime=payload.tax_regime,
+        income_tax_declarant=payload.income_tax_declarant,
+        default_withholding_operation=payload.default_withholding_operation,
+        default_withholding_percent=payload.default_withholding_percent,
         is_active=payload.is_active,
     )
     db_session.add(supplier)
@@ -436,6 +441,9 @@ def _purchase_to_out(p: models.Purchase) -> schemas.PurchaseOut:
         purchased_at=p.purchased_at,
         received_at=p.received_at,
         total_cost=p.total_cost,
+        withholding_operation_type=p.withholding_operation_type,
+        withholding_source_rate=p.withholding_source_rate,
+        withholding_source_amount=p.withholding_source_amount,
         created_at=p.created_at,
         items=[_purchase_item_to_out(i) for i in p.items],
     )
@@ -576,8 +584,46 @@ def create_purchase(
         db_session.add(product)
 
     purchase.total_cost = total.quantize(Decimal("1"))
-    if supplier_ids:
-        purchase.supplier_id = supplier_ids.pop() if len(supplier_ids) == 1 else None
+    n_unique_suppliers = len(supplier_ids)
+    sole_supplier_id = next(iter(supplier_ids)) if n_unique_suppliers == 1 else None
+    purchase.supplier_id = sole_supplier_id
+
+    withhold_supplier_id: int | None = sole_supplier_id
+    if n_unique_suppliers > 1 and payload.supplier_id is not None:
+        withhold_supplier_id = resolve_supplier_id(payload.supplier_id)
+    elif n_unique_suppliers == 0 and payload.supplier_id is not None:
+        withhold_supplier_id = resolve_supplier_id(payload.supplier_id)
+
+    purchase.withholding_operation_type = None
+    purchase.withholding_source_rate = None
+    purchase.withholding_source_amount = None
+
+    op = payload.withholding_operation_type
+    if op is not None and withhold_supplier_id is not None:
+        ws = (
+            db_session.query(models.Supplier)
+            .filter(
+                models.Supplier.id == withhold_supplier_id,
+                models.Supplier.is_active.is_(True),  # noqa: E712 - SQLAlchemy is_
+            )
+            .first()
+        )
+        if ws:
+            decl = withholding_co.effective_income_tax_declarant(
+                ws.tax_regime,
+                ws.income_tax_declarant,
+            )
+            custom_pct = getattr(ws, "default_withholding_percent", None)
+            if custom_pct is not None:
+                custom_pct = Decimal(str(custom_pct))
+            rate, amount = withholding_co.compute_withholding_source(
+                total, op, decl, custom_pct
+            )
+            purchase.withholding_operation_type = op
+            if rate is not None and amount is not None:
+                purchase.withholding_source_rate = rate
+                purchase.withholding_source_amount = amount
+
     db_session.add(purchase)
     db_session.commit()
     p_full = (

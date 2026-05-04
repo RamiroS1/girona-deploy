@@ -7,6 +7,10 @@ type SupplierUpdateBody = {
   phone?: string | null;
   gender?: string;
   is_active?: boolean;
+  tax_regime?: "common" | "natural";
+  income_tax_declarant?: boolean;
+  default_withholding_operation?: "purchase" | "service";
+  default_withholding_percent?: number | null;
   ingredient_product_ids?: number[];
 };
 
@@ -32,6 +36,30 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     payloadToSend.ingredient_product_ids = Array.isArray(body.ingredient_product_ids)
       ? body.ingredient_product_ids.filter((id) => typeof id === "number" && Number.isFinite(id))
       : [];
+  }
+  if (body.tax_regime !== undefined) {
+    payloadToSend.tax_regime = body.tax_regime === "natural" ? "natural" : "common";
+  }
+  if (body.income_tax_declarant !== undefined) {
+    payloadToSend.income_tax_declarant = !!body.income_tax_declarant;
+  }
+  if (body.default_withholding_operation !== undefined) {
+    payloadToSend.default_withholding_operation =
+      body.default_withholding_operation === "service" ? "service" : "purchase";
+  }
+  if (body.default_withholding_percent !== undefined) {
+    if (body.default_withholding_percent === null) {
+      payloadToSend.default_withholding_percent = null;
+    } else {
+      const n = Number(body.default_withholding_percent);
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        return NextResponse.json(
+          { message: "Porcentaje de retención inválido (0–100 o vacío como null)" },
+          { status: 400 },
+        );
+      }
+      payloadToSend.default_withholding_percent = n;
+    }
   }
 
   let response: Response;

@@ -15,7 +15,48 @@ type Supplier = {
   is_active: boolean;
   created_at: string;
   ingredient_product_ids?: number[];
+  tax_regime?: "common" | "natural" | string;
+  income_tax_declarant?: boolean;
+  default_withholding_operation?: "purchase" | "service";
+  /** Porcentaje nominal (ej. 2.5 = 2,5 %); ausente = tabla legal por declarante */
+  default_withholding_percent?: number | string | null;
 };
+
+/** Para vista prevía en el proveedor (misma tabla que Inventario compras). */
+type SupplierWHOp = "purchase" | "service";
+
+const SUPL_RETE_COMPRA_BASE = 524_000;
+const SUPL_RETE_SERVICIO_BASE = 105_000;
+
+function supplierFormDeclarant(regime: "common" | "natural", incomeDecl: boolean): boolean {
+  return regime === "natural" ? incomeDecl : true;
+}
+
+function supplierFormWithholdingPct(op: SupplierWHOp, declarant: boolean): number {
+  if (op === "purchase") return declarant ? 2.5 : 3.5;
+  return declarant ? 4 : 6;
+}
+
+function supplierFormWHBaseCop(op: SupplierWHOp): number {
+  return op === "purchase" ? SUPL_RETE_COMPRA_BASE : SUPL_RETE_SERVICIO_BASE;
+}
+
+function supplierFormWHBaseFormatted(op: SupplierWHOp): string {
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(supplierFormWHBaseCop(op));
+}
+
+/** Vacío = usar tabla legal; fuera de rango = invalid para validar al guardar */
+function parseSupplierPercentField(raw: string): number | null | "invalid" {
+  const t = raw.trim();
+  if (!t) return null;
+  const n = Number.parseFloat(t.replace(",", "."));
+  if (!Number.isFinite(n) || n < 0 || n > 100) return "invalid";
+  return n;
+}
 
 type SupplierIngredientOption = {
   id: number;
@@ -178,6 +219,37 @@ export default function Personnel() {
   const [documentInput, setDocumentInput] = useState("");
   const [phoneInput, setPhoneInput] = useState("");
   const [genderInput, setGenderInput] = useState("male");
+  const [supplierTaxRegimeInput, setSupplierTaxRegimeInput] = useState<"common" | "natural">("common");
+  const [supplierIncomeTaxDeclarantInput, setSupplierIncomeTaxDeclarantInput] = useState(true);
+  const [supplierDefaultWithholdingOp, setSupplierDefaultWithholdingOp] =
+    useState<SupplierWHOp>("purchase");
+  const [supplierWithholdingPercentInput, setSupplierWithholdingPercentInput] = useState("");
+
+  const supplierRetentionPreview = useMemo(() => {
+    const decl = supplierFormDeclarant(supplierTaxRegimeInput, supplierIncomeTaxDeclarantInput);
+    const parsed = parseSupplierPercentField(supplierWithholdingPercentInput);
+    const invalidCustom = parsed === "invalid";
+    const customPct = parsed === "invalid" || parsed === null ? null : parsed;
+    const pct =
+      customPct !== null
+        ? customPct
+        : supplierFormWithholdingPct(supplierDefaultWithholdingOp, decl);
+    const altPct =
+      customPct !== null ? null : supplierFormWithholdingPct(supplierDefaultWithholdingOp, !decl);
+    return {
+      decl,
+      pct,
+      altPct,
+      baseLabel: supplierFormWHBaseFormatted(supplierDefaultWithholdingOp),
+      pctSource: customPct !== null ? ("custom" as const) : ("table" as const),
+      invalidCustom,
+    };
+  }, [
+    supplierTaxRegimeInput,
+    supplierIncomeTaxDeclarantInput,
+    supplierDefaultWithholdingOp,
+    supplierWithholdingPercentInput,
+  ]);
 
   const [supplierIngredientCatalog, setSupplierIngredientCatalog] = useState<
     SupplierIngredientOption[]
@@ -308,6 +380,10 @@ export default function Personnel() {
     setDocumentInput("");
     setPhoneInput("");
     setGenderInput("male");
+    setSupplierTaxRegimeInput("common");
+    setSupplierIncomeTaxDeclarantInput(true);
+    setSupplierDefaultWithholdingOp("purchase");
+    setSupplierWithholdingPercentInput("");
     setSupplierIngredientRows([]);
   }
 
@@ -351,10 +427,18 @@ export default function Personnel() {
 
     if (tab === "suppliers") {
       const ids = (target as Supplier).ingredient_product_ids ?? [];
+      const s = target as Supplier;
+      setSupplierTaxRegimeInput(s.tax_regime === "natural" ? "natural" : "common");
+      setSupplierIncomeTaxDeclarantInput(Boolean(s.income_tax_declarant ?? true));
+      setSupplierDefaultWithholdingOp(
+        s.default_withholding_operation === "service" ? "service" : "purchase",
+      );
+      const wh = s.default_withholding_percent;
+      setSupplierWithholdingPercentInput(
+        wh !== null && wh !== undefined && String(wh).trim() !== "" ? String(wh) : "",
+      );
       setSupplierIngredientRows(
-        ids.length
-          ? ids.map((id) => ({ kind: "existing" as const, productId: id }))
-          : [],
+        ids.length ? ids.map((id) => ({ kind: "existing" as const, productId: id })) : [],
       );
     } else {
       setSupplierIngredientRows([]);
@@ -501,6 +585,20 @@ export default function Personnel() {
 
     if (tab === "suppliers") {
       payload.phone = phone ? phone : null;
+      payload.gender = "male";
+      payload.tax_regime = supplierTaxRegimeInput;
+      payload.income_tax_declarant =
+        supplierTaxRegimeInput === "natural" ? supplierIncomeTaxDeclarantInput : true;
+      payload.default_withholding_operation = supplierDefaultWithholdingOp;
+      const pctField = parseSupplierPercentField(supplierWithholdingPercentInput);
+      if (pctField === "invalid") {
+        setSubmitStatus({
+          kind: "error",
+          message: "Porcentaje de retención inválido: usá un número entre 0 y 100, o dejá vacío para la tabla legal.",
+        });
+        return;
+      }
+      payload.default_withholding_percent = pctField === null ? null : pctField;
       const resolvedIds: number[] = [];
       for (let i = 0; i < supplierIngredientRows.length; i++) {
         const row = supplierIngredientRows[i];
@@ -773,7 +871,9 @@ export default function Personnel() {
                 {formMode === "create" ? "Nuevo" : "Editar"} {currentSingular}
               </h3>
               <p className="text-sm text-body-color dark:text-dark-6">
-                Completa la informacion basica para este registro.
+                {tab === "suppliers"
+                  ? "Datos basicos primero; debajo aparece retención en la fuente (% opcional, compra/servicio), régimen y declarante, y luego los ingredientes."
+                  : "Completa la informacion basica para este registro."}
               </p>
             </div>
             <div className="flex gap-2">
@@ -862,6 +962,129 @@ export default function Personnel() {
             ) : null}
 
           </div>
+
+          {tab === "suppliers" ? (
+            <div className="mt-4 rounded-md border-2 border-primary/35 bg-white p-4 shadow-sm dark:border-primary/45 dark:bg-gray-dark">
+              <div className="mb-2 text-sm font-semibold text-dark dark:text-white">
+                Retención en la fuente (proveedor)
+              </div>
+              <p className="mb-3 text-xs leading-relaxed text-body-color dark:text-dark-6">
+                Indicá el tipo de operación por defecto y, si corresponde, el porcentaje de retención que
+                aplica este proveedor. Eso es lo que se precarga al registrar una compra en{" "}
+                <span className="font-medium text-dark dark:text-white">Inventario</span>. Si dejás el
+                porcentaje vacío, se usan las tasas estándar según régimen y si declara renta.
+              </p>
+              <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                    Compra de bienes o servicio
+                  </label>
+                  <select
+                    value={supplierDefaultWithholdingOp}
+                    onChange={(e) =>
+                      setSupplierDefaultWithholdingOp(
+                        e.target.value === "service" ? "service" : "purchase",
+                      )
+                    }
+                    className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                  >
+                    <option value="purchase">
+                      Compra (bienes) — base {supplierFormWHBaseFormatted("purchase")}
+                    </option>
+                    <option value="service">
+                      Servicio — base {supplierFormWHBaseFormatted("service")}
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                    Porcentaje de retención en la fuente (%)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={supplierWithholdingPercentInput}
+                    onChange={(e) => setSupplierWithholdingPercentInput(e.target.value)}
+                    placeholder="Ej. 2,5 — vacío = tabla legal"
+                    className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                  />
+                  {supplierRetentionPreview.invalidCustom ? (
+                    <p className="mt-1 text-[11px] text-red">
+                      Ingresá un número entre 0 y 100 o dejá vacío.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-body-color dark:text-dark-6">
+                      Opcional. Punto o coma como decimal.
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="mb-4 rounded-md bg-primary/10 px-3 py-3 text-xs dark:bg-primary/20">
+                <p className="font-semibold text-dark dark:text-white">
+                  Vista previa: si el total de la compra supera {supplierRetentionPreview.baseLabel}, la
+                  retención usaría{" "}
+                  <span className="text-primary">
+                    {supplierRetentionPreview.pct.toLocaleString("es-CO", {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 4,
+                    })}
+                    %
+                  </span>
+                  {supplierRetentionPreview.pctSource === "custom"
+                    ? " (valor que digitaste)."
+                    : ` según tabla legal (declarante de renta: ${supplierRetentionPreview.decl ? "sí" : "no"}).`}
+                </p>
+                {supplierRetentionPreview.pctSource === "table" &&
+                supplierRetentionPreview.altPct !== null ? (
+                  <p className="mt-2 text-[11px] text-body-color dark:text-dark-6">
+                    Si no fuera declarante en esta combinación, la tasa sería{" "}
+                    {supplierRetentionPreview.altPct.toLocaleString("es-CO")} %. Cambiá régimen o
+                    declaración para ver otro escenario.
+                  </p>
+                ) : null}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-body-color dark:text-dark-6">
+                    Tipo de régimen
+                  </label>
+                  <select
+                    value={supplierTaxRegimeInput}
+                    onChange={(e) =>
+                      setSupplierTaxRegimeInput(
+                        e.target.value === "natural" ? "natural" : "common",
+                      )
+                    }
+                    className="w-full rounded-md border border-stroke bg-white px-3 py-2 text-sm text-dark outline-none focus:border-primary dark:border-dark-3 dark:bg-gray-dark dark:text-white"
+                  >
+                    <option value="common">Común</option>
+                    <option value="natural">Natural</option>
+                  </select>
+                  <p className="mt-1 text-[11px] text-body-color dark:text-dark-6">
+                    Régimen común: se trata como declarante. Persona natural: podés marcar si es
+                    declarante de renta.
+                  </p>
+                </div>
+                <div className="flex items-end pb-0.5">
+                  <label
+                    className={
+                      "flex cursor-pointer items-start gap-2 text-sm leading-snug text-dark dark:text-white " +
+                      (supplierTaxRegimeInput === "natural" ? "" : "opacity-50 pointer-events-none")
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={supplierIncomeTaxDeclarantInput}
+                      disabled={supplierTaxRegimeInput !== "natural"}
+                      onChange={(e) => setSupplierIncomeTaxDeclarantInput(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-stroke accent-primary disabled:accent-gray-400"
+                    />
+                    <span>Declarante de renta (solo aplica si el régimen es Natural)</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {tab === "suppliers" ? (
             <div className="mt-4 space-y-3 border-t border-stroke pt-4 dark:border-dark-3">
@@ -1247,6 +1470,13 @@ export default function Personnel() {
                   <div className="relative z-10 space-y-2">
                     <h3 className="text-lg font-extrabold">{supplier.name}</h3>
                     <p className="text-md font-semibold text-white/85">Telefono: {supplier.phone || "-"}</p>
+                    <p className="text-sm font-medium text-white/80">
+                      {supplier.tax_regime === "natural"
+                        ? `Natural · ${
+                            supplier.income_tax_declarant !== false ? "declarante" : "no declarante"
+                          }`
+                        : "Regimen común"}
+                    </p>
                     <p
                       className={`text-sm font-semibold ${
                         supplier.is_active ? "text-green-200" : "text-red-200"

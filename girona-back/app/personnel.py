@@ -57,11 +57,21 @@ def _supplier_ingredient_ids(db_session: Session, supplier_id: int) -> list[int]
 
 
 def _supplier_out(db_session: Session, supplier: models.Supplier) -> schemas.SupplierOut:
+    dwo = getattr(supplier, "default_withholding_operation", None)
+    if dwo not in ("purchase", "service"):
+        dwo = "purchase"
+    wh_pct = getattr(supplier, "default_withholding_percent", None)
     return schemas.SupplierOut(
         id=supplier.id,
         name=supplier.name,
         phone=supplier.phone,
         gender=supplier.gender,
+        tax_regime=supplier.tax_regime
+        if supplier.tax_regime in ("common", "natural")
+        else "common",
+        income_tax_declarant=supplier.income_tax_declarant,
+        default_withholding_operation=dwo,
+        default_withholding_percent=wh_pct,
         is_active=supplier.is_active,
         created_at=supplier.created_at,
         ingredient_product_ids=_supplier_ingredient_ids(db_session, supplier.id),
@@ -118,6 +128,10 @@ def create_supplier(
         name=payload.name.strip(),
         phone=payload.phone,
         gender=payload.gender.strip() if payload.gender else "male",
+        tax_regime=payload.tax_regime,
+        income_tax_declarant=payload.income_tax_declarant,
+        default_withholding_operation=payload.default_withholding_operation,
+        default_withholding_percent=payload.default_withholding_percent,
         is_active=payload.is_active,
     )
     db_session.add(supplier)

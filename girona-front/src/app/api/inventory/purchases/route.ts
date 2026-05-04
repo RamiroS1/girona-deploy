@@ -13,6 +13,7 @@ type PurchaseItemCreate = {
 
 type PurchaseCreateBody = {
   supplier_id?: number | null;
+  withholding_operation_type?: "purchase" | "service";
   items?: PurchaseItemCreate[];
 };
 
@@ -115,6 +116,7 @@ export async function POST(request: Request) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         supplier_id: body.supplier_id ?? null,
+        withholding_operation_type: body.withholding_operation_type ?? null,
         items: body.items,
       }),
     });

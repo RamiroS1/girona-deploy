@@ -1,6 +1,7 @@
 from decimal import Decimal
 from datetime import date, datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -110,6 +111,12 @@ class SupplierBase(BaseModel):
     phone: str | None = Field(default=None, max_length=50)
     gender: str = Field(default="male", max_length=20)
     is_active: bool = True
+    # common = régimen común; natural = persona natural (declarante o no según income_tax_declarant)
+    tax_regime: Literal["common", "natural"] = "common"
+    income_tax_declarant: bool = True
+    default_withholding_operation: Literal["purchase", "service"] = "purchase"
+    # null = tasas por tabla legal; si se informa, es el % nominal (2.5 = 2,5 %)
+    default_withholding_percent: Decimal | None = Field(default=None, ge=0, le=100)
 
 
 class SupplierCreate(SupplierBase):
@@ -121,6 +128,10 @@ class SupplierUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=50)
     gender: str | None = Field(default=None, max_length=20)
     is_active: bool | None = None
+    tax_regime: Literal["common", "natural"] | None = None
+    income_tax_declarant: bool | None = None
+    default_withholding_operation: Literal["purchase", "service"] | None = None
+    default_withholding_percent: Decimal | None = Field(default=None, ge=0, le=100)
     ingredient_product_ids: list[int] | None = None
 
 
@@ -149,6 +160,7 @@ class PurchaseCreate(BaseModel):
     supplier_id: int | None = None
     purchased_at: datetime | None = None
     received_at: datetime | None = None
+    withholding_operation_type: Literal["purchase", "service"] | None = None
     items: list[PurchaseItemCreate] = Field(min_length=1)
 
 
@@ -173,6 +185,9 @@ class PurchaseOut(BaseModel):
     purchased_at: datetime | None
     received_at: datetime | None
     total_cost: Decimal
+    withholding_operation_type: str | None = None
+    withholding_source_rate: Decimal | None = None
+    withholding_source_amount: Decimal | None = None
     created_at: datetime
     items: list[PurchaseItemOut]
 
